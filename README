@@ -1,0 +1,37 @@
+# AI Inference System
+
+This project provides an AI inference pipeline using Docker, Kafka  
+
+## Getting Started
+
+1. **Start All Services**
+
+    Run the following command to start all required services:
+    ```
+    docker compose up -d
+    ```
+1.1. **build the deepstream cpp**
+(check the CUDA version modify in the make file or run export  
+Run make
+2. **Configure Input Source**
+
+    - To change the input source (e.g., camera RTSP URL) or update the ROI polygon coordinates:
+      - Open the configuration file:
+         ```
+         config/app_config.json
+         ```
+      - Edit the relevant fields as needed.
+
+3. **View Logs **
+
+    - To print logs or view detections from Kafka, run:
+      ```
+      python3 consumer.py
+      ```
+
+  
+
+## Notes
+
+- Ensure Docker and Python are installed on your system.
+- Update configuration files as per your requirements before starting the services.

@@ -1,0 +1,401 @@
+#include <gst/gst.h>
+#include <json-glib/json-glib.h>
+#include <glib.h>
+#include <cstdio>
+#include <string>
+#include <iostream>
+#include <cuda_runtime_api.h>
+#include <nlohmann/json.hpp>
+#include "nvbufsurface.h"
+#include "gstnvdsmeta.h"
+#include "nvds_obj_encode.h"
+#include "gst-nvmessage.h"
+#include "nvdsmeta_schema.h"
+#include "utils/common_utils.h"
+#include "utils/json_config_read.h"
+#define GST_CAPS_FEATURES_NVMM "memory:NVMM"
+// Constants
+#ifndef MAX_TIME_STAMP_LEN
+#define MAX_TIME_STAMP_LEN 32
+#endif
+
+// Muxer Configuration per nvstreammux documentation
+#define MUXER_OUTPUT_WIDTH 1280
+#define MUXER_OUTPUT_HEIGHT 720
+#define MUXER_BATCH_TIMEOUT_USEC 40000 // 4 seconds (Max wait for batch)
+
+gint frame_number = 0;
+
+struct ProbeData
+{
+    NvDsObjEncCtxHandle obj_ctx_handle;
+    JsonObject *root_obj;
+    JsonParser *parser;
+};
+
+static void probe_data_destroy(gpointer data)
+{
+    if (data)
+    {
+        ProbeData *probe_data = static_cast<ProbeData *>(data);
+        if (probe_data->parser)
+        {
+            g_object_unref(probe_data->parser);
+        }
+        delete probe_data;
+    }
+}
+
+// Probe Function: Cleaned to remove all Detection and Analytics logic
+static GstPadProbeReturn streammux_src_pad_buffer_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u_data)
+{
+    GstBuffer *buf = (GstBuffer *)info->data;
+    GstMapInfo inmap = GST_MAP_INFO_INIT;
+
+    ProbeData *probe_data = static_cast<ProbeData *>(u_data);
+    NvDsObjEncCtxHandle enc_ctx = probe_data->obj_ctx_handle;
+    JsonObject *root_obj = probe_data->root_obj;
+
+    if (!gst_buffer_map(buf, &inmap, GST_MAP_READ))
+    {
+        GST_ERROR("Failed to map GstBuffer.");
+        return GST_PAD_PROBE_OK;
+    }
+
+    NvBufSurface *ip_surf = (NvBufSurface *)inmap.data;
+    gst_buffer_unmap(buf, &inmap);
+
+    NvDsBatchMeta *batch_meta = gst_buffer_get_nvds_batch_meta(buf);
+    if (!batch_meta)
+        return GST_PAD_PROBE_OK;
+
+    const char *service_id = json_object_get_string_member(root_obj, "service_id");
+    JsonObject *data_obj = json_object_get_object_member(root_obj, "data");
+    GList *ids = json_object_get_members(data_obj);
+
+    // Iterate over frames in the batch
+    for (NvDsMetaList *l_frame = batch_meta->frame_meta_list; l_frame != NULL; l_frame = l_frame->next)
+    {
+        NvDsFrameMeta *frame_meta = (NvDsFrameMeta *)l_frame->data;
+        int source_id = frame_meta->source_id;
+        
+        // Get Camera ID and RTSP URL from config
+        const char *id = static_cast<const char *>(g_list_nth_data(ids, source_id));
+        if (!id) continue; 
+        
+        JsonObject *entry = json_object_get_object_member(data_obj, id);
+        const char *rtsp_url = json_object_get_string_member(entry, "link");
+
+        // --- 1. Encode Full Frame to JPEG (Base64) ---
+        NvDsObjEncUsrArgs frameData = {0};
+        frameData.isFrame = 1;           // Encode full frame
+        frameData.saveImg = FALSE;       // Do not save to disk
+        frameData.attachUsrMeta = TRUE;  // Attach to buffer for extraction
+        frameData.scaleImg = FALSE;
+        frameData.quality = 60;          // JPEG Quality
+
+        // Process encoding
+        nvds_obj_enc_process(enc_ctx, &frameData, ip_surf, NULL, frame_meta);
+
+        // --- 2. Generate Timestamp ---
+        gchar ts[MAX_TIME_STAMP_LEN + 1];
+        generate_ts_rfc3339(ts, MAX_TIME_STAMP_LEN);
+
+        // --- 3. Build JSON Payload ---
+        JsonObject *rootObj = json_object_new();
+        json_object_set_string_member(rootObj, "timestamp", ts);
+        json_object_set_string_member(rootObj, "camera_id", id);
+        json_object_set_string_member(rootObj, "rtsp_url", rtsp_url);
+        json_object_set_string_member(rootObj, "service_id", service_id);
+
+        nvds_obj_enc_finish(enc_ctx);
+
+        // --- 4. Extract Base64 Image from User Meta ---
+        gchar *frame_image_base64 = NULL;
+        for (NvDsMetaList *l_user = frame_meta->frame_user_meta_list; l_user != NULL; l_user = l_user->next)
+        {
+            NvDsUserMeta *user_meta = (NvDsUserMeta *)l_user->data;
+            if (user_meta->base_meta.meta_type == NVDS_CROP_IMAGE_META)
+            {
+                NvDsObjEncOutParams *enc_jpeg_image = (NvDsObjEncOutParams *)user_meta->user_meta_data;
+                
+                // Convert JPEG buffer to Base64
+                frame_image_base64 = g_base64_encode(enc_jpeg_image->outBuffer, enc_jpeg_image->outLen);
+                
+                json_object_set_string_member(rootObj, "frame_image_base64", frame_image_base64);
+                json_object_set_int_member(rootObj, "frame_width", frame_meta->source_frame_width);
+                json_object_set_int_member(rootObj, "frame_height", frame_meta->source_frame_height);
+                
+                break; 
+            }
+        }
+
+        // --- 5. Attach to NvDsEventMsgMeta for Kafka ---
+        JsonNode *rootNode = json_node_new(JSON_NODE_OBJECT);
+        json_node_set_object(rootNode, rootObj);
+        gchar *frame_json_str = json_to_string(rootNode, TRUE);
+
+        NvDsEventMsgMeta *msg_meta = (NvDsEventMsgMeta *)g_malloc0(sizeof(NvDsEventMsgMeta));
+        msg_meta->type = NVDS_EVENT_CUSTOM;
+        msg_meta->objType = NVDS_OBJECT_TYPE_CUSTOM;
+        msg_meta->frameId = frame_meta->frame_num;
+        msg_meta->ts = g_strdup(ts);
+        msg_meta->sensorId = source_id;
+        msg_meta->sensorStr = g_strdup(id);
+        msg_meta->videoPath = g_strdup(rtsp_url);
+        msg_meta->extMsg = (void *)g_strdup(frame_json_str);
+        msg_meta->extMsgSize = strlen(frame_json_str) + 1;
+        
+
+        // --- DEBUG PRINT START ---
+        if (frame_json_str) {
+            std::cout << "\n=======================================" << std::endl;
+            std::cout << "📦 JSON PAYLOAD GENERATED (" << strlen(frame_json_str) << " bytes):" << std::endl;
+            
+            // CAUTION: Printing the full base64 string will flood your console. 
+            // I will print the first 500 characters to verify structure. 
+            // If you really want the whole thing, remove the .substr logic.
+            std::string debug_str(frame_json_str);
+            if (debug_str.length() > 500) {
+                 std::cout << debug_str.substr(0, 500) << "\n... [Truncated for Console readability] ..." << std::endl;
+            } else {
+                 std::cout << debug_str << std::endl;
+            }
+            std::cout << "=======================================\n" << std::endl;
+        } else {
+            std::cerr << "❌ Error: frame_json_str is NULL" << std::endl;
+        }
+        // Cleanup
+        if (frame_image_base64) g_free(frame_image_base64);
+        g_free(frame_json_str);
+        json_node_free(rootNode);
+        json_object_unref(rootObj);
+
+        // Add to frame
+        NvDsUserMeta *user_event_meta = nvds_acquire_user_meta_from_pool(batch_meta);
+        if (user_event_meta)
+        {
+            user_event_meta->user_meta_data = (void *)msg_meta;
+            user_event_meta->base_meta.meta_type = NVDS_EVENT_MSG_META;
+            user_event_meta->base_meta.copy_func = (NvDsMetaCopyFunc)meta_copy_func;
+            user_event_meta->base_meta.release_func = (NvDsMetaReleaseFunc)meta_free_func;
+            nvds_add_user_meta_to_frame(frame_meta, user_event_meta);
+        }
+        else
+        {
+            if (msg_meta->ts) g_free(msg_meta->ts);
+            if (msg_meta->sensorStr) g_free(msg_meta->sensorStr);
+            if (msg_meta->videoPath) g_free(msg_meta->videoPath);
+            if (msg_meta->extMsg) g_free(msg_meta->extMsg);
+            g_free(msg_meta);
+        }
+    }
+
+    g_list_free(ids);
+    frame_number++;
+    return GST_PAD_PROBE_OK;
+}
+
+static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer data)
+{
+    GMainLoop *loop = static_cast<GMainLoop *>(data);
+    switch (GST_MESSAGE_TYPE(msg))
+    {
+    case GST_MESSAGE_EOS:
+        std::cout << "End of stream" << std::endl;
+        g_main_loop_quit(loop);
+        break;
+    case GST_MESSAGE_ERROR:
+    {
+        gchar *debug;
+        GError *error;
+        gst_message_parse_error(msg, &error, &debug);
+        std::cerr << "ERROR: " << error->message << std::endl;
+        if (debug) std::cerr << "Debug: " << debug << std::endl;
+        g_free(debug);
+        g_error_free(error);
+        g_main_loop_quit(loop);
+        break;
+    }
+    default:
+        break;
+    }
+    return TRUE;
+}
+
+static void cb_newpad(GstElement *decodebin, GstPad *decoder_src_pad, gpointer data)
+{
+    GstCaps *caps = gst_pad_get_current_caps(decoder_src_pad);
+    if (!caps) caps = gst_pad_query_caps(decoder_src_pad, nullptr);
+    const GstStructure *str = gst_caps_get_structure(caps, 0);
+    const gchar *name = gst_structure_get_name(str);
+    GstElement *source_bin = static_cast<GstElement *>(data);
+    GstCapsFeatures *features = gst_caps_get_features(caps, 0);
+
+    if (!strncmp(name, "video", 5))
+    {
+        if (gst_caps_features_contains(features, GST_CAPS_FEATURES_NVMM))
+        {
+            GstPad *bin_ghost_pad = gst_element_get_static_pad(source_bin, "src");
+            if (!gst_ghost_pad_set_target(GST_GHOST_PAD(bin_ghost_pad), decoder_src_pad))
+                std::cerr << "Failed to link decoder src pad to source bin ghost pad" << std::endl;
+            gst_object_unref(bin_ghost_pad);
+        }
+    }
+    gst_caps_unref(caps);
+}
+
+static GstElement *create_source_bin(guint index, gchar *uri)
+{
+    GstElement *bin = nullptr, *uri_decode_bin = nullptr;
+    std::string bin_name = "source-bin-" + std::to_string(index);
+    bin = gst_bin_new(bin_name.c_str());
+    uri_decode_bin = gst_element_factory_make("nvurisrcbin", "uri-decode-bin");
+
+    if (!bin || !uri_decode_bin) return nullptr;
+
+    g_object_set(G_OBJECT(uri_decode_bin), "uri", uri, nullptr);
+    g_object_set(G_OBJECT(uri_decode_bin), "gpu-id", 0, "cudadec-memtype", 0, 
+                 "num-extra-surfaces", 1, "async-handling", TRUE, 
+                 "rtsp-reconnect-interval", 10, "rtsp-reconnect-attempts", -1, nullptr);
+
+    g_signal_connect(G_OBJECT(uri_decode_bin), "pad-added", G_CALLBACK(cb_newpad), bin);
+    gst_bin_add(GST_BIN(bin), uri_decode_bin);
+    gst_element_add_pad(bin, gst_ghost_pad_new_no_target("src", GST_PAD_SRC));
+    return bin;
+}
+
+int main(int argc, char *argv[])
+{
+    GMainLoop *loop = nullptr;
+    GstElement *pipeline = nullptr, *streammux = nullptr, 
+               *queue = nullptr, *nvmsgconv = nullptr, *nvmsgbroker = nullptr;
+
+    GstBus *bus = nullptr;
+    guint bus_watch_id;
+    guint gpu_id = 0;
+
+    // --- Load Configuration ---
+    JsonParser *app_configs = json_parser_new();
+    GError *error = NULL;
+    
+    if (!json_parser_load_from_file(app_configs, "configs/app_config.json", &error))
+    {
+        std::cout << "Unable to read app_config.json: " << error->message << std::endl;
+        g_error_free(error);
+        return 1;
+    }
+
+    JsonObject *root_obj = json_node_get_object(json_parser_get_root(app_configs));
+    JsonObject *data_obj = json_object_get_object_member(root_obj, "data");
+    GList *ids = json_object_get_members(data_obj);
+    int num_sources = g_list_length(ids);
+
+    gst_init(&argc, &argv);
+    loop = g_main_loop_new(nullptr, FALSE);
+
+    // --- Create Pipeline Elements ---
+    pipeline = gst_pipeline_new("kafka-only-pipeline");
+    streammux = gst_element_factory_make("nvstreammux", "stream-muxer");
+    queue = gst_element_factory_make("queue", "kafka-queue"); // Added Queue for stability
+    nvmsgconv = gst_element_factory_make("nvmsgconv", "nvmsgconv");
+    nvmsgbroker = gst_element_factory_make("nvmsgbroker", "nvmsgbroker");
+
+    if (!pipeline || !streammux || !queue || !nvmsgconv || !nvmsgbroker)
+    {
+        std::cerr << "Element creation failed. Verify DeepStream is installed correctly." << std::endl;
+        return -1;
+    }
+
+    // --- Add Elements to Pipeline ---
+    // Note: fakesink is REMOVED because nvmsgbroker is the sink
+    gst_bin_add_many(GST_BIN(pipeline), streammux, queue, nvmsgconv, nvmsgbroker, nullptr);
+
+    // --- Configure Streammux ---
+    g_object_set(G_OBJECT(streammux), 
+                 "batch-size", num_sources,        
+                 "width", MUXER_OUTPUT_WIDTH,      
+                 "height", MUXER_OUTPUT_HEIGHT,    
+                 "batched-push-timeout", MUXER_BATCH_TIMEOUT_USEC, 
+                 "gpu-id", gpu_id,                 
+                 "attach-sys-ts", TRUE,            
+                 nullptr);
+
+    // --- Configure Kafka ---
+    // Ensure these config files exist in your 'configs' folder!
+    std::string lib_path_kafka = "configs/libnvds_kafka_proto.so";
+    g_object_set(G_OBJECT(nvmsgconv), "config", "configs/msgconv_config.txt", "payload-type", 1, nullptr);
+    g_object_set(G_OBJECT(nvmsgbroker), "proto-lib", lib_path_kafka.c_str(), 
+                 "conn-str", "broker;9092", "topic", "deepstream-kafka-python", "sync", false, nullptr);
+
+    // --- Link Pipeline ---
+    // Flow: Mux -> Queue -> Conv -> Broker
+    if (!gst_element_link_many(streammux, queue, nvmsgconv, nvmsgbroker, nullptr))
+    {
+        std::cerr << "Pipeline linking failed. Check if elements are compatible." << std::endl;
+        return -1;
+    }
+
+    // --- Add Sources ---
+    for (int i = 0; i < num_sources; ++i)
+    {
+        const char *id = static_cast<const char *>(g_list_nth_data(ids, i));
+        JsonObject *entry = json_object_get_object_member(data_obj, id);
+        const char *link = json_object_get_string_member(entry, "link");
+        std::string pad_name = "sink_" + std::to_string(i);
+        
+        GstElement *source_bin = create_source_bin(i, const_cast<gchar *>(link));
+        if (!source_bin) return -1;
+
+        gst_bin_add(GST_BIN(pipeline), source_bin);
+
+        GstPad *sinkpad = gst_element_request_pad_simple(streammux, pad_name.c_str());
+        GstPad *srcpad = gst_element_get_static_pad(source_bin, "src");
+
+        if (!sinkpad || !srcpad || gst_pad_link(srcpad, sinkpad) != GST_PAD_LINK_OK)
+        {
+            std::cerr << "Source linking failed for stream " << i << std::endl;
+            return -1;
+        }
+        gst_object_unref(srcpad);
+        gst_object_unref(sinkpad);
+    }
+
+    // --- Attach Probe to StreamMux Src ---
+    // This captures the frame BEFORE it hits the queue/converter
+    NvDsObjEncCtxHandle obj_ctx_handle = nvds_obj_enc_create_context(gpu_id);
+    if (!obj_ctx_handle) return -1;
+
+    ProbeData *probe_data = new ProbeData();
+    probe_data->obj_ctx_handle = obj_ctx_handle;
+    probe_data->root_obj = root_obj;
+    probe_data->parser = app_configs;
+
+    GstPad *muxer_src_pad = gst_element_get_static_pad(streammux, "src");
+    if (muxer_src_pad)
+    {
+        gst_pad_add_probe(muxer_src_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                          streammux_src_pad_buffer_probe, probe_data, probe_data_destroy);
+        gst_object_unref(muxer_src_pad);
+    }
+
+    bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
+    bus_watch_id = gst_bus_add_watch(bus, bus_call, loop);
+    gst_object_unref(bus);
+
+    g_list_free(ids);
+    gst_element_set_state(pipeline, GST_STATE_PLAYING);
+
+    std::cout << "🚀 Running Kafka-Only Pipeline..." << std::endl;
+    std::cout << "📡 Sending Base64 frames to Kafka..." << std::endl;
+    g_main_loop_run(loop);
+
+    std::cout << "Stopping..." << std::endl;
+    nvds_obj_enc_destroy_context(obj_ctx_handle);
+    gst_element_set_state(pipeline, GST_STATE_NULL);
+    gst_object_unref(GST_OBJECT(pipeline));
+    g_source_remove(bus_watch_id);
+    g_main_loop_unref(loop);
+
+    return 0;
+}
