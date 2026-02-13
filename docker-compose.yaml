@@ -1,81 +1,81 @@
 services:
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.3.0
-    container_name: zookeeper
-    environment:
-      - ZOOKEEPER_CLIENT_PORT=2181
-      - ZOOKEEPER_TICK_TIME=2000
-      - ALLOW_ANONYMOUS_LOGIN=yes
-    ports:
-      - "2181:2181"
-    volumes:
-      - "zookeeper_data:/bitnami"
-    networks:
-      - deepstream_networks
+  # zookeeper:
+  #   image: confluentinc/cp-zookeeper:7.3.0
+  #   container_name: zookeeper
+  #   environment:
+  #     - ZOOKEEPER_CLIENT_PORT=2181
+  #     - ZOOKEEPER_TICK_TIME=2000
+  #     - ALLOW_ANONYMOUS_LOGIN=yes
+  #   ports:
+  #     - "2181:2181"
+  #   volumes:
+  #     - "zookeeper_data:/bitnami"
+  #   networks:
+  #     - deepstream_networks
   
-  broker:
-    image: confluentinc/cp-kafka:7.3.0
-    container_name: kafka
-    ports:
-      - "9093:9093" # Exposed for Python script on Host
-    depends_on:
-      - zookeeper
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # Define listeners
-      KAFKA_LISTENERS: INSIDE://0.0.0.0:9092,OUTSIDE://0.0.0.0:9093
+  # broker:
+  #   image: confluentinc/cp-kafka:7.3.0
+  #   container_name: kafka
+  #   ports:
+  #     - "9093:9093" # Exposed for Python script on Host
+  #   depends_on:
+  #     - zookeeper
+  #   environment:
+  #     KAFKA_BROKER_ID: 1
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     # Define listeners
+  #     KAFKA_LISTENERS: INSIDE://0.0.0.0:9092,OUTSIDE://0.0.0.0:9093
    
-      KAFKA_ADVERTISED_LISTENERS: INSIDE://broker:9092,OUTSIDE://localhost:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+  #     KAFKA_ADVERTISED_LISTENERS: INSIDE://broker:9092,OUTSIDE://localhost:9093
+  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+  #     KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
        
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    networks:
-      - deepstream_networks
+  #     KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  #   networks:
+  #     - deepstream_networks
 
-  Inference_server_service:
-    tty: true
-    image: triton_server:v1.0
-    container_name: tritonserver_service
-    # build: 
-    #   context: .
-    #   dockerfile: triton_server.Dockerfile
-    ports:
-      - "8003:8000"
-      - "8001:8001"
-      - "8002:8002"
+  # Inference_server_service:
+  #   tty: true
+  #   image: triton_server:v1.0
+  #   container_name: tritonserver_service
+  #   # build: 
+  #   #   context: .
+  #   #   dockerfile: triton_server.Dockerfile
+  #   ports:
+  #     - "8003:8000"
+  #     - "8001:8001"
+  #     - "8002:8002"
       
-    volumes:
-      - ${PWD}/model_repository:/opt/tritonserver/model_repository
-    environment:
-      - CUDA_MODULE_LOADING=LAZY      
-    deploy:
-      restart_policy:
-        condition: on-failure
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - deepstream_networks
+  #   volumes:
+  #     - ${PWD}/model_repository:/opt/tritonserver/model_repository
+  #   environment:
+  #     - CUDA_MODULE_LOADING=LAZY      
+  #   deploy:
+  #     restart_policy:
+  #       condition: on-failure
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   networks:
+  #     - deepstream_networks
 
 
   deepstram_client_service:
     tty: true
-    image: deepstream_client_python:001
-    container_name: deepstream_client_service
+    image: deepstream_client_cpp:001
+    container_name: deepstream_cpp_client_service
     build:
       context: . 
       dockerfile: deepstream_inference.Dockerfile
     ports:
-      - "8555:8554"
-    depends_on:
-      - Inference_server_service
+      - "8558:8554"
+    # depends_on:
+    #   - Inference_server_service
     volumes:
       - ${PWD}:/opt/nvidia/deepstream/deepstream-8.0/kafka-cpp
       - /var/run/docker.sock:/var/run/docker.sock
@@ -97,9 +97,9 @@ services:
 networks:
   deepstream_networks:
     driver: bridge
-volumes:
-  zookeeper_data:
-    driver: local
-  kafka_data:
-    driver: local
+# volumes:
+#   zookeeper_data:
+#     driver: local
+#   kafka_data:
+#     driver: local
  

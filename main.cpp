@@ -37,7 +37,9 @@ int main(int argc,char** argv){
         std::cerr << "NO Urls founding in config. Exiting "<< std::endl;
         return -1;
     }
-    DeepstreamPipeline pipeline(uris);
+    guint rtsp_port=8554;
+    guint udp_port=5400;
+    DeepstreamPipeline pipeline(uris,rtsp_port,udp_port);
     pipeline.build();
     pipeline.run();
 

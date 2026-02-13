@@ -22,6 +22,7 @@ LIBS:= $(shell pkg-config --libs $(PKGS))
 LIBS+= -L/opt/nvidia/deepstream/deepstream/lib \
        -L/usr/local/cuda-$(CUDA_VER)/lib64 \
        -lnvdsgst_helper -lnvdsgst_meta -lnvds_meta \
+       -lgstrtspserver-1.0 \
        -lnvbufsurface -lnvbufsurftransform \
        -lnvds_yml_parser -lnvds_batch_jpegenc \
        -lcudart -lcuda -lm 
