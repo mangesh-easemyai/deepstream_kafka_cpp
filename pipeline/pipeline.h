@@ -5,6 +5,7 @@
 #include <glib.h>
 #include <vector>
 #include <string>
+#include <cmath>
 
 #include <gst/rtsp-server/rtsp-server.h>
 #include "nvbufsurface.h"
@@ -13,21 +14,22 @@
 
 class DeepstreamPipeline{
     public:
-        DeepstreamPipeline(std::vector<std::string> urls_,guint rtsp_port_,guint udp_port_);
+        DeepstreamPipeline(std::vector<std::string> urls_,guint rtsp_port_,guint udp_port_,std::string infer_config_path_);
         ~DeepstreamPipeline();
         void build();
         void run();
         void stop();
     private:
         GMainLoop *loop_=nullptr;
-        GstElement *pipeline_=nullptr,*streammux=nullptr,*fakesink=nullptr;
+        GstElement *pipeline_=nullptr,*streammux=nullptr,*tiler_=nullptr,*nvinferserver_=nullptr,*nvosd_=nullptr;
         GstElement *encoder_=nullptr,*parse_=nullptr,*payloader_=nullptr,*udpsink_=nullptr;
-        GstElement *queue_encoder_=nullptr,*queue_payloader_=nullptr,*queue_parse_=nullptr;
+        GstElement *queue_encoder_=nullptr,*queue_payloader_=nullptr,*queue_parse_=nullptr,*queue_tiler_=nullptr,*queue_infer_=nullptr,*queue_osd_=nullptr;
         GstBus *bus_=nullptr;
 
         GstRTSPServer *server_=nullptr;
         std::vector<std::string> urls_;
         std::string service_id_="ds-test";
+        std::string infer_config_path_;
         guint rtsp_port_;
         guint udp_port_;
         std::vector<GstElement*> source_bins_;

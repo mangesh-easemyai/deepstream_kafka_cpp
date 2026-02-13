@@ -1,6 +1,6 @@
 #include "pipeline.h"
 
-DeepstreamPipeline::DeepstreamPipeline(std::vector<std::string> urls,guint rtsp_port,guint udp_port):urls_(urls),rtsp_port_(rtsp_port),udp_port_(udp_port){
+DeepstreamPipeline::DeepstreamPipeline(std::vector<std::string> urls,guint rtsp_port,guint udp_port,std::string infer_config_path):urls_(urls),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path){
     std::cout << "Pipeline Initialized with "<< urls_.size() << " sources for tesing "<< std::endl;
 
 }
@@ -13,16 +13,22 @@ void DeepstreamPipeline::build(){
     loop_=g_main_loop_new(nullptr,FALSE);
     pipeline_=gst_pipeline_new("test-pipeline");
     streammux=gst_element_factory_make("nvstreammux","stream-muxer");
+    nvinferserver_=gst_element_factory_make("nvinferserver","primary-nvinference-enginer");
+    nvosd_=gst_element_factory_make("nvdsosd","nv-onscreendisplay");
+    tiler_=gst_element_factory_make("nvmultistreamtiler","nvtiler");
     encoder_=gst_element_factory_make("nvv4l2h264enc","h264-encoder");
     parse_=gst_element_factory_make("h264parse","h264-parse");
     payloader_=gst_element_factory_make("rtph264pay","rtp-payer");
     udpsink_=gst_element_factory_make("udpsink","udp-sink");
 
     queue_encoder_=gst_element_factory_make("queue","queue_encoder");
+    queue_infer_=gst_element_factory_make("queue","queue_infer");
+    queue_osd_=gst_element_factory_make("queue","queue_osd");
     queue_parse_=gst_element_factory_make("queue","parse_encoder");
     queue_payloader_=gst_element_factory_make("queue","queue_payloader");
+    queue_tiler_=gst_element_factory_make("queue","queue_nvtiler");
 
-    if(!pipeline_ ||!streammux||!queue_encoder_||!encoder_ ||!queue_parse_ ||!parse_||!queue_payloader_ ||!payloader_||!udpsink_){
+    if(!pipeline_ ||!streammux||!queue_infer_ ||!nvinferserver_||!queue_osd_ ||!nvosd_||!queue_tiler_ ||!tiler_ ||!queue_encoder_||!encoder_ ||!queue_parse_ ||!parse_||!queue_payloader_ ||!payloader_||!udpsink_){
         std::cerr << "Build Error: failed to create element" << std::endl;
         return;
     }
@@ -30,11 +36,20 @@ void DeepstreamPipeline::build(){
     int batch_size=urls_.size();
     g_object_set(streammux,"batch-size",batch_size,"width",1280,"height",720,"batched-push-timeout",40000,
                 "enable-padding",TRUE,nullptr);
+    guint tiler_rows=(guint)ceil(sqrt(batch_size));
+    guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
+    g_object_set(nvinferserver_,"config-file-path",infer_config_path_.c_str(),nullptr);
+    g_object_set(nvosd_,"process-mode",0,nullptr);
+    g_object_set(tiler_,"rows",tiler_rows,"columns",tiler_cols,"width",1920,"height",1080,nullptr);
+    
     g_object_set(encoder_,"bitrate",4000000,
                 "profile",0,nullptr);
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
     g_object_set(payloader_,"config-interval",1,"pt",96,nullptr);
 
+    g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
+    g_object_set(queue_osd_,"max-size-buffers",5,nullptr);
+    g_object_set(queue_tiler_,"max-size-buffers",5,nullptr);
     g_object_set(queue_encoder_,"max-size-buffers",5,nullptr);
     g_object_set(queue_parse_,"max-size-buffers",5,nullptr);
     g_object_set(queue_payloader_,"max-size-buffers",5,nullptr);
@@ -44,9 +59,9 @@ void DeepstreamPipeline::build(){
                 "async",FALSE,nullptr);
     
         
-    gst_bin_add_many(GST_BIN(pipeline_),streammux,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr);
+    gst_bin_add_many(GST_BIN(pipeline_),streammux,queue_infer_,nvinferserver_,queue_tiler_,tiler_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr);
 
-    if(!gst_element_link_many(streammux,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
+    if(!gst_element_link_many(streammux,queue_infer_,nvinferserver_,queue_tiler_,tiler_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
         std::cerr << "Build Error: Failed to link muxer to sink" << std::endl;
         return;
     }

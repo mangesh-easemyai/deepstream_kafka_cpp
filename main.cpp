@@ -39,7 +39,8 @@ int main(int argc,char** argv){
     }
     guint rtsp_port=8554;
     guint udp_port=5400;
-    DeepstreamPipeline pipeline(uris,rtsp_port,udp_port);
+    std::string infer_config_path="configs/Primary_Detector/config_infer_triton_yolov8.txt";
+    DeepstreamPipeline pipeline(uris,rtsp_port,udp_port,infer_config_path);
     pipeline.build();
     pipeline.run();
 
