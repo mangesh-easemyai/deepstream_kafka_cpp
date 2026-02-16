@@ -1,6 +1,6 @@
 #include "pipeline.h"
 
-DeepstreamPipeline::DeepstreamPipeline(std::vector<std::string> urls,guint rtsp_port,guint udp_port,std::string infer_config_path):urls_(urls),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path){
+DeepstreamPipeline::DeepstreamPipeline(std::vector<std::string> urls,guint rtsp_port,guint udp_port,std::string infer_config_path,std::string tracker_config_path):urls_(urls),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path),tracker_config_path_( tracker_config_path){
     std::cout << "Pipeline Initialized with "<< urls_.size() << " sources for tesing "<< std::endl;
 
 }
@@ -14,6 +14,7 @@ void DeepstreamPipeline::build(){
     pipeline_=gst_pipeline_new("test-pipeline");
     streammux=gst_element_factory_make("nvstreammux","stream-muxer");
     nvinferserver_=gst_element_factory_make("nvinferserver","primary-nvinference-enginer");
+    nvtracker_=gst_element_factory_make("nvtracker","nvtracker");
     nvosd_=gst_element_factory_make("nvdsosd","nv-onscreendisplay");
     tiler_=gst_element_factory_make("nvmultistreamtiler","nvtiler");
     encoder_=gst_element_factory_make("nvv4l2h264enc","h264-encoder");
@@ -28,7 +29,7 @@ void DeepstreamPipeline::build(){
     queue_payloader_=gst_element_factory_make("queue","queue_payloader");
     queue_tiler_=gst_element_factory_make("queue","queue_nvtiler");
 
-    if(!pipeline_ ||!streammux||!queue_infer_ ||!nvinferserver_||!queue_osd_ ||!nvosd_||!queue_tiler_ ||!tiler_ ||!queue_encoder_||!encoder_ ||!queue_parse_ ||!parse_||!queue_payloader_ ||!payloader_||!udpsink_){
+    if(!pipeline_ ||!streammux|| !nvinferserver_|| !nvtracker_||!queue_tiler_ ||!tiler_ ||!queue_osd_ ||!nvosd_||!queue_encoder_||!encoder_ ||!queue_parse_ ||!parse_||!queue_payloader_ ||!payloader_||!udpsink_){
         std::cerr << "Build Error: failed to create element" << std::endl;
         return;
     }
@@ -39,14 +40,20 @@ void DeepstreamPipeline::build(){
     guint tiler_rows=(guint)ceil(sqrt(batch_size));
     guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
     g_object_set(nvinferserver_,"config-file-path",infer_config_path_.c_str(),nullptr);
-    g_object_set(nvosd_,"process-mode",0,nullptr);
+    if(!set_tracker_properties(nvtracker_)){
+        std::cerr << "FATAL : Failed to configure tracker, check config path" << tracker_config_path_ << std::endl;
+        return;
+    }
+
+    g_object_set(nvosd_,"process-mode",1,nullptr);
     g_object_set(tiler_,"rows",tiler_rows,"columns",tiler_cols,"width",1920,"height",1080,nullptr);
     
     g_object_set(encoder_,"bitrate",4000000,
+                "vbv-size", 4500000,
                 "profile",0,nullptr);
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
-    g_object_set(payloader_,"config-interval",1,"pt",96,nullptr);
-
+    g_object_set(payloader_,"config-interval",0,"pt",96,nullptr);
+    
     g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
     g_object_set(queue_osd_,"max-size-buffers",5,nullptr);
     g_object_set(queue_tiler_,"max-size-buffers",5,nullptr);
@@ -55,13 +62,13 @@ void DeepstreamPipeline::build(){
     g_object_set(queue_payloader_,"max-size-buffers",5,nullptr);
     g_object_set(udpsink_,"host","127.0.0.1",
                 "port",udp_port_,
-                "sync",FALSE,
+                "sync",TRUE,
                 "async",FALSE,nullptr);
     
         
-    gst_bin_add_many(GST_BIN(pipeline_),streammux,queue_infer_,nvinferserver_,queue_tiler_,tiler_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr);
+    gst_bin_add_many(GST_BIN(pipeline_),streammux, queue_infer_, nvinferserver_, nvtracker_, queue_tiler_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr);
 
-    if(!gst_element_link_many(streammux,queue_infer_,nvinferserver_,queue_tiler_,tiler_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
+    if(!gst_element_link_many(streammux,   queue_infer_, nvinferserver_,nvtracker_,queue_tiler_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
         std::cerr << "Build Error: Failed to link muxer to sink" << std::endl;
         return;
     }
@@ -99,12 +106,104 @@ void DeepstreamPipeline::build(){
     std::cout << "Build Test Pipeline build succefully "<< std::endl;  
 }
 
+bool DeepstreamPipeline::set_tracker_properties(GstElement *nvtracker){
+    GKeyFile *key_file =g_key_file_new();
+    GError *error =nullptr;
+    bool ret=false;
+
+    const gchar* CONFIG_GROUP_TRACKER="tracker";
+    const gchar* CONFIG_GROUP_TRACKER_WIDTH="tracker-width";
+    const gchar* CONFIG_GROUP_TRACKER_HEIGHT="tracker-height";
+    const gchar* CONFIG_GPU_ID="gpu-id";
+    const gchar* CONFIG_GROUP_TRACKER_LL_CONFIG_FILE="ll-config-file";
+    const gchar* CONFIG_GROUP_TRACKER_LL_LIB_FILE="ll-lib-file";
+    
+    if(!g_key_file_load_from_file(key_file,tracker_config_path_.c_str(),G_KEY_FILE_NONE,&error)){
+        if(error){
+            std::cerr << "Failed to load tracker config file : "<< tracker_config_path_ << std::endl;
+            std::cerr <<"Error : "<< error->message << std::endl;
+            g_error_free(error);
+        }else{
+            std::cerr << "Failed to load tracker config file (unknown error )"<< std::endl;
+        }
+        g_key_file_free(key_file);
+        return false;
+    }
+
+    gsize num_keys=0;
+    gchar **keys =g_key_file_get_keys(key_file,CONFIG_GROUP_TRACKER,&num_keys,&error);
+    if(error){
+        std::cerr << "Error reading keys from tracker config "<< error->message << std::endl;
+        g_error_free(error);
+        goto done;
+    }
+
+    for(gsize i=0;i<num_keys;i++){
+        gchar *key=keys[i];
+        if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_WIDTH)){
+            gint width=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GROUP_TRACKER_WIDTH,&error);
+            if(!error){
+                g_object_set(G_OBJECT(nvtracker),"tracker-width",width,nullptr);
+            }
+        }
+        else if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_HEIGHT)){
+            gint height=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GROUP_TRACKER_HEIGHT,&error);
+            
+            if(&error){
+                g_object_set(G_OBJECT(nvtracker),"tracker-height",height,nullptr);
+            }
+        }
+        else if(!g_strcmp0(key,CONFIG_GPU_ID)){
+            guint gpu_id=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GPU_ID,&error);
+            if(&error){
+                g_object_set(G_OBJECT(nvtracker),"gpu-id",gpu_id,nullptr);
+            }
+        }
+        else if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_LL_CONFIG_FILE)){
+            gchar *ll_config_path_str=g_key_file_get_string(key_file,CONFIG_GROUP_TRACKER,CONFIG_GROUP_TRACKER_LL_CONFIG_FILE,&error);
+            if(!error){
+                std::string abs_path=get_absolute_file_path(tracker_config_path_,ll_config_path_str);
+                std::cout << "Setting Tracker LL config:  "<< abs_path << std::endl;
+                g_object_set(G_OBJECT(nvtracker),"ll-config-file",abs_path.c_str(),nullptr);
+            }
+        }else if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_LL_LIB_FILE)){
+            gchar *ll_lib_path_str=g_key_file_get_string(key_file,CONFIG_GROUP_TRACKER,CONFIG_GROUP_TRACKER_LL_LIB_FILE,&error);
+            if(!error){
+                std::string abs_path=get_absolute_file_path(tracker_config_path_,ll_lib_path_str);
+                std::cout << "Setting Tracker ll lib : "<< abs_path << std::endl;
+                g_object_set(G_OBJECT(nvtracker),"ll-lib-file",abs_path.c_str(),nullptr);
+                g_free(ll_lib_path_str);
+            }
+        }else{
+            std::cerr << "Unknown key" << key << " in group [ "<<CONFIG_GROUP_TRACKER <<  "]" << std::endl;
+        }
+        if(error){
+            std::cerr << "Error parsing key "<< key << ": "<< error->message << std::endl;
+            g_error_free(error);
+            error=nullptr;
+        }
+    }
+    ret=true;
+done:
+    if(keys){
+        g_strfreev(keys);
+    }
+    if(key_file){
+        g_key_file_free(key_file);
+    }
+    if(error){
+        g_error_free(error);
+    }
+    return ret;
+}
+
+
 gboolean DeepstreamPipeline::setup_rtsp_server(){
     GstRTSPMountPoints *mounts;
     GstRTSPMediaFactory *factory;
     std::string udpsrc_pipeline;
     std::string port_num_str;
-    guint64 udp_buffer_size = 512 * 1024;
+    guint64 udp_buffer_size = 4 * 1024 * 1024;
     udpsrc_pipeline ="( udpsrc name=pay0 port=" + std::to_string(udp_port_) +
 " buffer-size="+std::to_string(udp_buffer_size)+
 " caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" )";

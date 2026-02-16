@@ -1,9 +1,7 @@
-CUDA_VER?=
-ifeq ($(CUDA_VER),)
-  $(error "CUDA_VER is not set")
-endif
+CUDA_VER=12.8
  
-APP:= deepstream_yolo_app
+ 
+APP:= deepstream_app
 PKGS:= glib-2.0 gobject-2.0 json-glib-1.0 uuid gstreamer-1.0   
 SRCS:= $(wildcard *.cpp) $(wildcard utils/*.cpp) $(wildcard pipeline/*.cpp)
 

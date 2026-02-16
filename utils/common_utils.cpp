@@ -71,30 +71,25 @@ void generate_ts_rfc3339(char *buf, int buf_size)
 }
 std::string get_absolute_file_path(const std::string &cfg_file_path, const std::string &file_path)
 {
-    char abs_cfg_path[PATH_MAX + 1];
-
-    if (!file_path.empty() && file_path[0] == '/')
-    {
+     if(file_path.empty()){
+        return " ";
+     }
+     //if path is already absolute ,return it
+     if(file_path[0]=='/'){
         return file_path;
-    }
-
-    if (!realpath(cfg_file_path.c_str(), abs_cfg_path))
-    {
-        return "";
-    }
-
-    // Return absolute path of config file if file_path is NULL.
-    if (file_path.empty())
-    {
-        return abs_cfg_path;
-    }
-    std::string dir_path(abs_cfg_path);
-    size_t last_slash = dir_path.find_last_of('/');
-    if (last_slash != std::string::npos)
-    {
-        dir_path = dir_path.substr(0, last_slash + 1);
-    }
-    return dir_path + file_path;
+     }
+     std::string dir=cfg_file_path.substr(0,cfg_file_path.find_last_of("/\\"));
+     if(dir.empty()){
+        dir=".";
+     }
+     std::string abs_path=dir+"/"+file_path;
+     //simple check to see if the constructed file exist
+     struct stat buffer;
+     if(stat(abs_path.c_str(),&buffer)==0){
+        return abs_path;
+     }
+     //if not found ,return the original path 
+     return file_path;
 }
  
 /* Meta data release function set by user */
