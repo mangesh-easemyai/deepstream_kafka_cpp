@@ -35,7 +35,16 @@ void DeepstreamPipeline::build(){
     }
 
     int batch_size=urls_.size();
-    g_object_set(streammux,"batch-size",batch_size,"width",1280,"height",720,"batched-push-timeout",40000,
+    if(batch_size>4){
+        muxer_width_=640;
+        muxer_height_=360;
+        std::cout << "High source count detected. Switching to low-res tracking: " 
+                  << muxer_width_ << "x" << muxer_height_ << std::endl;
+    }else{
+        muxer_width_=1280;
+        muxer_height_=720;
+    }
+    g_object_set(streammux,"batch-size",batch_size,"width",muxer_width_,"height",muxer_height_,"batched-push-timeout",40000,
                 "enable-padding",TRUE,nullptr);
     guint tiler_rows=(guint)ceil(sqrt(batch_size));
     guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
@@ -137,23 +146,13 @@ bool DeepstreamPipeline::set_tracker_properties(GstElement *nvtracker){
         g_error_free(error);
         goto done;
     }
+    g_object_set(G_OBJECT(nvtracker),"tracker-height",muxer_height_,
+                "tracker-width",muxer_width_,nullptr);
 
     for(gsize i=0;i<num_keys;i++){
         gchar *key=keys[i];
-        if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_WIDTH)){
-            gint width=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GROUP_TRACKER_WIDTH,&error);
-            if(!error){
-                g_object_set(G_OBJECT(nvtracker),"tracker-width",width,nullptr);
-            }
-        }
-        else if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_HEIGHT)){
-            gint height=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GROUP_TRACKER_HEIGHT,&error);
-            
-            if(&error){
-                g_object_set(G_OBJECT(nvtracker),"tracker-height",height,nullptr);
-            }
-        }
-        else if(!g_strcmp0(key,CONFIG_GPU_ID)){
+        
+        if(!g_strcmp0(key,CONFIG_GPU_ID)){
             guint gpu_id=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GPU_ID,&error);
             if(&error){
                 g_object_set(G_OBJECT(nvtracker),"gpu-id",gpu_id,nullptr);

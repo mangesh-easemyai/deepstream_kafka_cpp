@@ -27,7 +27,8 @@ class DeepstreamPipeline{
         GstElement *queue_encoder_=nullptr,*queue_payloader_=nullptr,*queue_parse_=nullptr,*queue_tiler_=nullptr,*queue_infer_=nullptr,*queue_osd_=nullptr,*queue_tracker=nullptr;
          
         GstBus *bus_=nullptr;
-
+        gint muxer_width_=1280;
+        gint muxer_height_=720;
         GstRTSPServer *server_=nullptr;
         std::vector<std::string> urls_;
         std::string tracker_config_path_;
