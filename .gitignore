@@ -4,3 +4,4 @@ nvdsinfer_custom_impl_Yolo/*
 model_repository/*
 configs/tracker_config/*.so
 deepstream_app
+.vscode 
