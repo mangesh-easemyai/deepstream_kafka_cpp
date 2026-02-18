@@ -13,8 +13,10 @@ void DeepstreamPipeline::build(){
     loop_=g_main_loop_new(nullptr,FALSE);
     pipeline_=gst_pipeline_new("test-pipeline");
     streammux=gst_element_factory_make("nvstreammux","stream-muxer");
-    nvinferserver_=gst_element_factory_make("nvinferserver","primary-nvinference-enginer");
+    primary_nvinference_=gst_element_factory_make("nvinferserver","primary-nvinference-enginer");
     nvtracker_=gst_element_factory_make("nvtracker","nvtracker");
+    nvdsanalytics_=gst_element_factory_make("nvdsanalytics","nvdsanalytics");
+    tee_=gst_element_factory_make("tee","tee");
     nvosd_=gst_element_factory_make("nvdsosd","nv-onscreendisplay");
     tiler_=gst_element_factory_make("nvmultistreamtiler","nvtiler");
     encoder_=gst_element_factory_make("nvv4l2h264enc","h264-encoder");
@@ -25,14 +27,21 @@ void DeepstreamPipeline::build(){
     queue_encoder_=gst_element_factory_make("queue","queue_encoder");
     queue_infer_=gst_element_factory_make("queue","queue_infer");
     queue_osd_=gst_element_factory_make("queue","queue_osd");
+    queue_display_ = gst_element_factory_make("queue","queue_display");
     queue_parse_=gst_element_factory_make("queue","parse_encoder");
     queue_payloader_=gst_element_factory_make("queue","queue_payloader");
     queue_tiler_=gst_element_factory_make("queue","queue_nvtiler");
 
-    if(!pipeline_ ||!streammux|| !nvinferserver_|| !nvtracker_||!queue_tiler_ ||!tiler_ ||!queue_osd_ ||!nvosd_||!queue_encoder_||!encoder_ ||!queue_parse_ ||!parse_||!queue_payloader_ ||!payloader_||!udpsink_){
+    //kafka branch
+    queue_kafka_=gst_element_factory_make("queue","queue_kafka");
+    nvmsgconv_=gst_element_factory_make("nvmsgconv","nvmsgconv");
+    nvmsgbroker_=gst_element_factory_make("nvmsgbroker","nvmsgbroker");
+
+    if(!pipeline_ ||!streammux|| !primary_nvinference_|| !nvtracker_||!nvdsanalytics_|| !tee_|| !queue_tiler_ ||!tiler_ ||!queue_osd_ ||!nvosd_||!queue_encoder_||!encoder_ ||!queue_parse_ ||!parse_||!queue_payloader_ ||!payloader_||!udpsink_){
         std::cerr << "Build Error: failed to create element" << std::endl;
         return;
     }
+    
 
     int batch_size=urls_.size();
     if(batch_size>4){
@@ -48,7 +57,8 @@ void DeepstreamPipeline::build(){
                 "enable-padding",TRUE,nullptr);
     guint tiler_rows=(guint)ceil(sqrt(batch_size));
     guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
-    g_object_set(nvinferserver_,"config-file-path",infer_config_path_.c_str(),nullptr);
+    g_object_set(primary_nvinference_,"config-file-path",infer_config_path_.c_str(),nullptr);
+    g_object_set(nvdsanalytics_,"config-file","configs/config_nvdsanalytics.txt",nullptr);
     if(!set_tracker_properties(nvtracker_)){
         std::cerr << "FATAL : Failed to configure tracker, check config path" << tracker_config_path_ << std::endl;
         return;
@@ -58,11 +68,13 @@ void DeepstreamPipeline::build(){
     g_object_set(tiler_,"rows",tiler_rows,"columns",tiler_cols,"width",1920,"height",1080,nullptr);
     
     g_object_set(encoder_,"bitrate",4000000,
-                "vbv-size", 4500000,
+                 
                 "profile",0,nullptr);
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
     g_object_set(payloader_,"config-interval",0,"pt",96,nullptr);
     
+    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",0, "msg2p-newapi",0,nullptr);
+    g_object_set(nvmsgbroker_,"proto-lib","configs/libnvds_kafka_proto.so","conn-str","kafka;9092","topic","deepstream-analytics","sync",false,nullptr);
     g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
     g_object_set(queue_osd_,"max-size-buffers",5,nullptr);
     g_object_set(queue_tiler_,"max-size-buffers",5,nullptr);
@@ -73,12 +85,25 @@ void DeepstreamPipeline::build(){
                 "port",udp_port_,
                 "sync",TRUE,
                 "async",FALSE,nullptr);
-    
-        
-    gst_bin_add_many(GST_BIN(pipeline_),streammux, queue_infer_, nvinferserver_, nvtracker_, queue_tiler_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr);
+ 
+    gst_bin_add_many(GST_BIN(pipeline_),streammux, queue_infer_, primary_nvinference_, nvtracker_, nvdsanalytics_,
+    tee_,
+    //display branch
+    queue_display_,queue_tiler_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,
+    //kafka branch
+    queue_kafka_,nvmsgconv_,nvmsgbroker_,
+    nullptr);
 
-    if(!gst_element_link_many(streammux,   queue_infer_, nvinferserver_,nvtracker_,queue_tiler_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
-        std::cerr << "Build Error: Failed to link muxer to sink" << std::endl;
+    if(!gst_element_link_many(streammux,   queue_infer_, primary_nvinference_,nvtracker_,nvdsanalytics_,tee_,nullptr)){
+        std::cerr << "Build Error: Failed to link main pipeline" << std::endl;
+        return;
+    }
+    if(!gst_element_link_many(tee_,queue_display_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
+        std::cerr << "Build Error: Failed to link display branch" << std::endl;
+        return;
+    }
+    if(!gst_element_link_many(tee_,queue_kafka_,nvmsgconv_,nvmsgbroker_,nullptr)){
+        std::cerr << "Build Error: Failed to link kafka branch" << std::endl;
         return;
     }
     for(int i=0;i< batch_size;i++){

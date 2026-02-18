@@ -22,7 +22,8 @@ class DeepstreamPipeline{
         void stop();
     private:
         GMainLoop *loop_=nullptr;
-        GstElement *pipeline_=nullptr,*streammux=nullptr,*tiler_=nullptr,*nvinferserver_=nullptr,*nvosd_=nullptr,*nvtracker_=nullptr,*nvdsanalytics_=nullptr;
+        GstElement *pipeline_=nullptr,*streammux=nullptr,*tiler_=nullptr,*primary_nvinference_=nullptr,*nvosd_=nullptr,*nvtracker_=nullptr,*nvdsanalytics_=nullptr;
+        GstElement *tee_=nullptr,*queue_display_=nullptr,*queue_kafka_=nullptr,*nvmsgconv_=nullptr,*nvmsgbroker_=nullptr;
         GstElement *encoder_=nullptr,*parse_=nullptr,*payloader_=nullptr,*udpsink_=nullptr;
         GstElement *queue_encoder_=nullptr,*queue_payloader_=nullptr,*queue_parse_=nullptr,*queue_tiler_=nullptr,*queue_infer_=nullptr,*queue_osd_=nullptr,*queue_tracker=nullptr;
          

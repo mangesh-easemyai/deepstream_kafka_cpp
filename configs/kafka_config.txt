@@ -1,0 +1,3 @@
+[message-broker]
+partition-key = sensor.id
+auto-reconnect=1

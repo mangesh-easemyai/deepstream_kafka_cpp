@@ -1,40 +1,45 @@
 services:
 
-  # zookeeper:
-  #   image: confluentinc/cp-zookeeper:7.3.0
-  #   container_name: zookeeper
-  #   environment:
-  #     - ZOOKEEPER_CLIENT_PORT=2181
-  #     - ZOOKEEPER_TICK_TIME=2000
-  #     - ALLOW_ANONYMOUS_LOGIN=yes
-  #   ports:
-  #     - "2181:2181"
-  #   volumes:
-  #     - "zookeeper_data:/bitnami"
-  #   networks:
-  #     - deepstream_networks
-  
-  # broker:
-  #   image: confluentinc/cp-kafka:7.3.0
-  #   container_name: kafka
-  #   ports:
-  #     - "9093:9093" # Exposed for Python script on Host
-  #   depends_on:
-  #     - zookeeper
-  #   environment:
-  #     KAFKA_BROKER_ID: 1
-  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-  #     # Define listeners
-  #     KAFKA_LISTENERS: INSIDE://0.0.0.0:9092,OUTSIDE://0.0.0.0:9093
-   
-  #     KAFKA_ADVERTISED_LISTENERS: INSIDE://broker:9092,OUTSIDE://localhost:9093
-  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
-  #     KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
-       
-  #     KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-  #   networks:
-  #     - deepstream_networks
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: zookeeper
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+    volumes:
+      - "zookeeper_data:/bitnami"
+    networks:
+      - deepstream_networks        
+  broker:
+    image: wurstmeister/kafka:latest
+    container_name: kafka
+    ports:
+      # - "9092:9092"   # Internal Docker Access
+      - "9093:9093"   # External Host Access
+    # expose:
+    #   - "9092"
+    depends_on:
+      - zookeeper
+    environment:
+      # LISTENERS: Where the socket binds. Use 0.0.0.0 to listen on all interfaces.
+      KAFKA_LISTENERS: DOCKER://broker:9092,OUTSIDE://0.0.0.0:9093
+      
+      # ADVERTISED_LISTENERS: What metadata the broker sends back to the client.
+      # 1. DOCKER: Clients inside docker (DeepStream) see "broker:9092"
+      # 2. OUTSIDE: Clients on Host see "localhost:9093"
+      KAFKA_ADVERTISED_LISTENERS: DOCKER://broker:9092,OUTSIDE://localhost:9093
+      
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CREATE_TOPICS: "deepstream-analytics:3:1"
+    volumes:
+      - kafka_data:/bitnami
+    networks:
+      - deepstream_networks
 
   Inference_server_service:
     tty: true
@@ -50,8 +55,8 @@ services:
       
     volumes:
       - ${PWD}/model_repository:/opt/tritonserver/model_repository
-    environment:
-      - CUDA_MODULE_LOADING=LAZY      
+    # environment:
+    #   - CUDA_MODULE_LOADING=LAZY      
     deploy:
       restart_policy:
         condition: on-failure
@@ -97,9 +102,9 @@ services:
 networks:
   deepstream_networks:
     driver: bridge
-# volumes:
-#   zookeeper_data:
-#     driver: local
-#   kafka_data:
-#     driver: local
+volumes:
+  zookeeper_data:
+    driver: local
+  kafka_data:
+    driver: local
  

@@ -54,20 +54,17 @@ std::vector<std::string> read_class_label(const std::string &filename)
 }
 
 /* Function to generate RFC3339 timestamp */
-void generate_ts_rfc3339(char *buf, int buf_size)
+void generate_ts_rfc3339(char *ts, size_t size)
 {
-    time_t tloc;
-    struct tm tm_log;
-    struct timespec ts;
-    char strmsec[6];
-
-    clock_gettime(CLOCK_REALTIME, &ts);
-    memcpy(&tloc, (void *)(&ts.tv_sec), sizeof(time_t));
-    gmtime_r(&tloc, &tm_log);
-    strftime(buf, buf_size, "%Y-%m-%dT%H:%M:%S", &tm_log);
-    int ms = ts.tv_nsec / 1000000;
-    g_snprintf(strmsec, sizeof(strmsec), ".%.3dZ", ms);
-    strncat(buf, strmsec, buf_size);
+     GDateTime *dt=g_date_time_new_now_local();
+     if(dt){
+        gchar *tmp=g_date_time_format(dt,"%Y-%m-%dT%H:%M:%S%z");
+        if(tmp){
+            g_strlcpy(ts,tmp,size);
+            g_free(tmp);
+        }
+        g_date_time_unref(dt);
+     }
 }
 std::string get_absolute_file_path(const std::string &cfg_file_path, const std::string &file_path)
 {
