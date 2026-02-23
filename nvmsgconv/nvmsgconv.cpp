@@ -9,10 +9,11 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
-
+#include "nvds_analytics_meta.h"
 #include "nvmsgconv.h"
 #include "deepstream_schema.h"
 #include <json-glib/json-glib.h>
+
 #include <uuid.h>
 #include <stdlib.h>
 #include <iostream>
@@ -32,7 +33,7 @@ nvds_msg2p_ctx_create(const gchar* file, NvDsPayloadType type)
     NvDsMsg2pCtx* ctx = NULL;
     string str;
     bool retVal = true;
-
+    std::cout << "nvds_msg2p_ctx_create\n";
     /*
      * Need to parse configuration / CSV files to get static properties of
      * components (e.g. sensor, place etc.) in case of full deepstream schema.
@@ -102,7 +103,7 @@ nvds_msg2p_generate_multiple(NvDsMsg2pCtx* ctx, NvDsEvent* events, guint eventSi
     *payloadCount = 0;
     // Set how many payloads are being sent back to the plugin
     payloads = (NvDsPayload**)g_malloc0(sizeof(NvDsPayload*) * 1);
-
+    std::cout << "nvds_msg2p_generate_multiple\n";
     if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM) {
         message = generate_event_message(ctx->privData, events->metadata);
         if (message) {
@@ -153,7 +154,7 @@ nvds_msg2p_generate(NvDsMsg2pCtx* ctx, NvDsEvent* events, guint size)
     gchar* message = NULL;
     size_t len = 0;
     NvDsPayload* payload = (NvDsPayload*)g_malloc0(sizeof(NvDsPayload));
-
+    std::cout << "nvds_msg2p_generate\n";
     if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM) {
         message = generate_event_message(ctx->privData, events->metadata);
         if (message) {
@@ -198,7 +199,7 @@ nvds_msg2p_generate_new(NvDsMsg2pCtx* ctx, void* metadataInfo)
     NvDsObjectMeta* obj_meta = (NvDsObjectMeta*)meta_info->objMeta;
 
     NvDsPayload* payload = (NvDsPayload*)g_malloc0(sizeof(NvDsPayload));
-
+    std::cout << "nvds_msg2p_generate_new set 1\n";
     if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM) {
         message = generate_dsmeta_message(ctx->privData, frame_meta, obj_meta);
         if (message) {
@@ -233,6 +234,7 @@ nvds_msg2p_generate_new(NvDsMsg2pCtx* ctx, void* metadataInfo)
             g_free(message);
         }
     } else if (ctx->payloadType == NVDS_PAYLOAD_CUSTOM) {
+        std::cout <<"nvs payload custom called \n";
         payload->payload = (gpointer)g_strdup("CUSTOM Schema");
         payload->payloadSize = strlen((char*)payload->payload) + 1;
     } else
@@ -254,7 +256,7 @@ nvds_msg2p_generate_multiple_new(NvDsMsg2pCtx* ctx, void* metadataInfo, guint* p
     NvDsMsg2pMetaInfo* meta_info = (NvDsMsg2pMetaInfo*)metadataInfo;
     NvDsFrameMeta* frame_meta = (NvDsFrameMeta*)meta_info->frameMeta;
     NvDsObjectMeta* obj_meta = (NvDsObjectMeta*)meta_info->objMeta;
-
+    std::cout << "nvds_msg2p_generate_multiple_new\n";
     if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM) {
         message = generate_dsmeta_message(ctx->privData, frame_meta, obj_meta);
         if (message) {

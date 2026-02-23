@@ -73,7 +73,7 @@ void DeepstreamPipeline::build(){
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
     g_object_set(payloader_,"config-interval",0,"pt",96,nullptr);
     
-    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",0, "msg2p-newapi",0,nullptr);
+    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",257, "msg2p-newapi",1,nullptr);
     g_object_set(nvmsgbroker_,"proto-lib","configs/libnvds_kafka_proto.so","conn-str","kafka;9092","topic","deepstream-analytics","sync",false,nullptr);
     g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
     g_object_set(queue_osd_,"max-size-buffers",5,nullptr);
@@ -146,8 +146,8 @@ bool DeepstreamPipeline::set_tracker_properties(GstElement *nvtracker){
     bool ret=false;
 
     const gchar* CONFIG_GROUP_TRACKER="tracker";
-    const gchar* CONFIG_GROUP_TRACKER_WIDTH="tracker-width";
-    const gchar* CONFIG_GROUP_TRACKER_HEIGHT="tracker-height";
+    // const gchar* CONFIG_GROUP_TRACKER_WIDTH="tracker-width";
+    // const gchar* CONFIG_GROUP_TRACKER_HEIGHT="tracker-height";
     const gchar* CONFIG_GPU_ID="gpu-id";
     const gchar* CONFIG_GROUP_TRACKER_LL_CONFIG_FILE="ll-config-file";
     const gchar* CONFIG_GROUP_TRACKER_LL_LIB_FILE="ll-lib-file";
