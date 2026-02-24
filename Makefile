@@ -3,7 +3,7 @@ CUDA_VER=12.8
  
 APP:= deepstream_app
 PKGS:= glib-2.0 gobject-2.0 json-glib-1.0 uuid gstreamer-1.0   
-SRCS:= $(wildcard *.cpp) $(wildcard utils/*.cpp) $(wildcard pipeline/*.cpp)
+SRCS:= $(wildcard *.cpp) $(wildcard utils/*.cpp) $(wildcard pipeline/*.cpp) $(wildcard src/*.cpp)
 
 # Include paths
 CFLAGS+= -I/opt/nvidia/deepstream/deepstream/sources/includes \

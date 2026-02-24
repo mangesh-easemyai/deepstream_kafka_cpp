@@ -12,10 +12,10 @@
 #include "gstnvdsmeta.h"
 
 #include "../utils/common_utils.h"
-
+#include "../src/probe.h"
 class DeepstreamPipeline{
     public:
-        DeepstreamPipeline(std::vector<std::string> urls_,guint rtsp_port_,guint udp_port_,std::string infer_config_path_,std::string tracker_config_path_);
+        DeepstreamPipeline(JsonObject *config_root,guint rtsp_port_=8554,guint udp_port_=5400,std::string infer_config_path_="configs/Primary_Detector/config_infer_triton_yolov8.txt",std::string tracker_config_path_="configs/tracker_config/tracker_config.txt");
         ~DeepstreamPipeline();
         void build();
         void run();
@@ -26,7 +26,7 @@ class DeepstreamPipeline{
         GstElement *tee_=nullptr,*queue_display_=nullptr,*queue_kafka_=nullptr,*nvmsgconv_=nullptr,*nvmsgbroker_=nullptr;
         GstElement *encoder_=nullptr,*parse_=nullptr,*payloader_=nullptr,*udpsink_=nullptr;
         GstElement *queue_encoder_=nullptr,*queue_payloader_=nullptr,*queue_parse_=nullptr,*queue_tiler_=nullptr,*queue_infer_=nullptr,*queue_osd_=nullptr,*queue_tracker=nullptr;
-         
+        JsonObject *config_root_;
         GstBus *bus_=nullptr;
         gint muxer_width_=1280;
         gint muxer_height_=720;

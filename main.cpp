@@ -1,49 +1,34 @@
 #include <iostream>
 #include <string>
-#include <vector>
-#include <fstream>
-#include <nlohmann/json.hpp>
+#include <vector> 
 #include "pipeline/pipeline.h"
-using json=nlohmann::json;
+#include <json-glib/json-glib.h>
 
-
-std::vector<std::string> get_url_from_json(){
-    std::vector<std::string> urls;
-    std::ifstream f("configs/app_config.json");
-    if(!f.is_open()){
-        std::cerr << "Failed to open app config.json"<< std::endl;
-        return urls;
+JsonObject *load_json_config(const std::string &file_path,JsonParser** out_parser){
+    GError *error=nullptr;
+    JsonParser *parser=json_parser_new();
+    if(!json_parser_load_from_file(parser,file_path.c_str(),&error)){
+        std::cerr << "Error loading the config file "<<(error->message)<< std::endl;
+        g_error_free(error);
+        g_object_unref(parser);
+        return nullptr;
     }
-    try{
-        json data=json::parse(f);
-        if(data.contains("data")&& data["data"].is_object()){
-            for(auto &[camera_id,config]:data["data"].items()){
-                if(config.contains("link")){
-                    std::string link=config["link"];
-                    urls.push_back(link);
-                    std::cout << "Loaded URL for "<< camera_id << " : "<< link << std::endl;
-                }
-            }
-        }
-    }catch(json::parse_error& e){
-        std::cerr << "Json Parse Error "<< e.what() << std::endl;
-    }
-    return urls;
+    *out_parser=parser;
+    return json_node_get_object(json_parser_get_root(parser));
 }
+
 int main(int argc,char** argv){
     gst_init(&argc,&argv);
-    std::vector<std::string> uris=get_url_from_json();
-    if(uris.empty()){
-        std::cerr << "NO Urls founding in config. Exiting "<< std::endl;
+    JsonParser *parser=nullptr;
+    JsonObject *root=load_json_config("configs/app_config.json",&parser);
+    if(!root){
         return -1;
     }
-    guint rtsp_port=8554;
-    guint udp_port=5400;
-    std::string infer_config_path="configs/Primary_Detector/config_infer_triton_yolov8.txt";
-    std::string tracker_config_path="configs/tracker_config/tracker_config.txt";
-    DeepstreamPipeline pipeline(uris,rtsp_port,udp_port,infer_config_path,tracker_config_path);
+
+    
+    DeepstreamPipeline pipeline(root);
     pipeline.build();
     pipeline.run();
-
+    g_object_unref(parser);
     return 0;
 }

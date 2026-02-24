@@ -54,7 +54,7 @@ std::vector<std::string> read_class_label(const std::string &filename)
 }
 
 /* Function to generate RFC3339 timestamp */
-void generate_ts_rfc3339(char *ts, size_t size)
+  void generate_ts_rfc3339_(char *ts, size_t size)
 {
      GDateTime *dt=g_date_time_new_now_local();
      if(dt){
@@ -93,33 +93,40 @@ std::string get_absolute_file_path(const std::string &cfg_file_path, const std::
 void meta_free_func(gpointer data, gpointer user_data)
 {
     NvDsUserMeta *user_meta = (NvDsUserMeta *)data;
-    NvDsEventMsgMeta *srcMeta = (NvDsEventMsgMeta *)user_meta->user_meta_data;
+    NvDsEventMsgMeta *srcMeta=(NvDsEventMsgMeta *)user_meta->user_meta_data;
 
-    if (srcMeta->ts)
-    {
+    // Use g_memdup2 instead of deprecated g_memdup
+    // dstMeta = (NvDsEventMsgMeta *)g_memdup2(srcMeta, sizeof(NvDsEventMsgMeta));
+
+    if (srcMeta->ts){
+        // dstMeta->ts = g_strdup(srcMeta->ts);
         g_free(srcMeta->ts);
     }
-
-    if (srcMeta->sensorStr)
-    {
+    if (srcMeta->sensorStr){
+        // dstMeta->sensorStr = g_strdup(srcMeta->sensorStr);
         g_free(srcMeta->sensorStr);
     }
-
-    if (srcMeta->objectId)
-    {
+    if (srcMeta->objectId){
+        // dstMeta->objectId = g_strdup(srcMeta->objectId);
         g_free(srcMeta->objectId);
+    }
+    if(srcMeta->videoPath){
+        g_free(srcMeta->videoPath);
+    }
+    if(srcMeta->extMsg){
+        g_free(srcMeta->extMsg);
     }
 
     g_free(srcMeta);
 }
 /* Meta data copy function set by user */
  gpointer meta_copy_func(gpointer data, gpointer user_data)
-{
+{   
     NvDsUserMeta *user_meta = (NvDsUserMeta *)data;
     NvDsEventMsgMeta *srcMeta = (NvDsEventMsgMeta *)user_meta->user_meta_data;
     NvDsEventMsgMeta *dstMeta = NULL;
 
-    // Use g_memdup2 instead of deprecated g_memdup
+    // FIX: Use g_memdup for GLib < 2.68 compatibility (common on DeepStream platforms)
     dstMeta = (NvDsEventMsgMeta *)g_memdup2(srcMeta, sizeof(NvDsEventMsgMeta));
 
     if (srcMeta->ts)
@@ -130,7 +137,12 @@ void meta_free_func(gpointer data, gpointer user_data)
 
     if (srcMeta->objectId)
         dstMeta->objectId = g_strdup(srcMeta->objectId);
+    
+    if (srcMeta->videoPath)
+        dstMeta->videoPath = g_strdup(srcMeta->videoPath);
+    
+    if (srcMeta->extMsg)
+        dstMeta->extMsg = g_strdup((char*)srcMeta->extMsg);
 
     return dstMeta;
 }
- 

@@ -17,8 +17,7 @@
 #   ll-config-file: required to set different tracker types
 #
 [tracker]
-tracker-width=1280
-tracker-height=720
+ 
 gpu-id=0
 ll-lib-file=configs/tracker_config/libnvds_nvmultiobjecttracker.so
 # ll-config-file required to set different tracker types

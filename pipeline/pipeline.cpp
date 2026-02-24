@@ -1,6 +1,28 @@
 #include "pipeline.h"
 
-DeepstreamPipeline::DeepstreamPipeline(std::vector<std::string> urls,guint rtsp_port,guint udp_port,std::string infer_config_path,std::string tracker_config_path):urls_(urls),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path),tracker_config_path_( tracker_config_path){
+DeepstreamPipeline::DeepstreamPipeline(JsonObject *config_root,guint rtsp_port,guint udp_port,std::string infer_config_path,std::string tracker_config_path):config_root_(config_root),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path),tracker_config_path_( tracker_config_path){
+
+    if(config_root){
+        if(json_object_has_member(config_root,"environment")){
+            const gchar *env=json_object_get_string_member(config_root,"environment");
+            std::cout << "Environment: "<< env << std::endl;
+        }
+    }
+    if(config_root && json_object_has_member(config_root,"data")){
+        JsonObject *data_obj=json_object_get_object_member(config_root,"data");
+        JsonObjectIter iter;
+        const gchar *key;
+        JsonNode *node;
+        json_object_iter_init(&iter,data_obj);
+        while(json_object_iter_next(&iter,&key,&node)){
+            JsonObject *stream_obj=json_node_get_object(node);
+            if(stream_obj && json_object_has_member(stream_obj,"link")){
+                const gchar *link=json_object_get_string_member(stream_obj,"link");
+                urls_.push_back(std::string(link));
+                std::cout << "Addesd URL "<< link << std::endl;
+            }
+        }
+    }
     std::cout << "Pipeline Initialized with "<< urls_.size() << " sources for tesing "<< std::endl;
 
 }
@@ -57,6 +79,7 @@ void DeepstreamPipeline::build(){
                 "enable-padding",TRUE,nullptr);
     guint tiler_rows=(guint)ceil(sqrt(batch_size));
     guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
+    
     g_object_set(primary_nvinference_,"config-file-path",infer_config_path_.c_str(),nullptr);
     g_object_set(nvdsanalytics_,"config-file","configs/config_nvdsanalytics.txt",nullptr);
     if(!set_tracker_properties(nvtracker_)){
@@ -73,7 +96,7 @@ void DeepstreamPipeline::build(){
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
     g_object_set(payloader_,"config-interval",0,"pt",96,nullptr);
     
-    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",257, "msg2p-newapi",1,nullptr);
+    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",0, "msg2p-newapi",1,nullptr);
     g_object_set(nvmsgbroker_,"proto-lib","configs/libnvds_kafka_proto.so","conn-str","kafka;9092","topic","deepstream-analytics","sync",false,nullptr);
     g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
     g_object_set(queue_osd_,"max-size-buffers",5,nullptr);
@@ -137,6 +160,31 @@ void DeepstreamPipeline::build(){
         std::cerr << "Failed to start RTSP server "<< std::endl;
         return;
     }
+    NvDsObjEncCtxHandle obj_ctx_handle=nvds_obj_enc_create_context(gpu_id);
+    if(!obj_ctx_handle){
+        std::cerr << "Unable to create context"<< std::endl;
+        return ;
+    }
+    ProbeData *probe_data=new ProbeData();
+    probe_data->obj_ctx_handle=obj_ctx_handle;
+    probe_data->root_obj=config_root_;
+    GstPad *analytics_src_pad=gst_element_get_static_pad(nvdsanalytics_,"src");
+    if(!analytics_src_pad){
+        std::cerr << "Failed to get src pad of nvanalytics src pad "<< std::endl;
+        return;
+    }
+    if(config_root_ && json_object_has_member(config_root_,"data")){
+        JsonObject *data_obj=json_object_get_object_member(config_root_,"data");
+        JsonObjectIter iter;
+        const gchar *key;
+        JsonNode *node;
+        json_object_iter_init(&iter,data_obj);
+        while(json_object_iter_next(&iter,&key,&node)){
+            probe_data->source_ids.push_back(key);
+        }
+    }
+    gst_pad_add_probe(analytics_src_pad,GST_PAD_PROBE_TYPE_BUFFER,nvdsanalytics_src_pad_buffer_probe,probe_data,nullptr);
+    gst_object_unref(analytics_src_pad);
     std::cout << "Build Test Pipeline build succefully "<< std::endl;  
 }
 
@@ -146,8 +194,8 @@ bool DeepstreamPipeline::set_tracker_properties(GstElement *nvtracker){
     bool ret=false;
 
     const gchar* CONFIG_GROUP_TRACKER="tracker";
-    // const gchar* CONFIG_GROUP_TRACKER_WIDTH="tracker-width";
-    // const gchar* CONFIG_GROUP_TRACKER_HEIGHT="tracker-height";
+    const gchar* CONFIG_GROUP_TRACKER_WIDTH="tracker-width";
+    const gchar* CONFIG_GROUP_TRACKER_HEIGHT="tracker-height";
     const gchar* CONFIG_GPU_ID="gpu-id";
     const gchar* CONFIG_GROUP_TRACKER_LL_CONFIG_FILE="ll-config-file";
     const gchar* CONFIG_GROUP_TRACKER_LL_LIB_FILE="ll-lib-file";
@@ -181,6 +229,10 @@ bool DeepstreamPipeline::set_tracker_properties(GstElement *nvtracker){
             guint gpu_id=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GPU_ID,&error);
             if(&error){
                 g_object_set(G_OBJECT(nvtracker),"gpu-id",gpu_id,nullptr);
+            }
+            else{
+                g_error_free(error);
+                error=nullptr;
             }
         }
         else if(!g_strcmp0(key,CONFIG_GROUP_TRACKER_LL_CONFIG_FILE)){

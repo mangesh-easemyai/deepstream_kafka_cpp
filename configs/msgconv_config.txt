@@ -16,22 +16,22 @@ description=rtsp://admin:Admin%40123@192.168.1.212:554/1/0
 # APPLICATION CONFIGURATION
 # ========================================
 
-[application]
-service_id=deepstream-analytics
-version=1.0
-branch=kafka
+#[application]
+#service_id=deepstream-analytics
+#version=1.0
+#branch=kafka
 
 # ========================================
 # CLASS LABELS
 # Map class_id to human-readable names
 # ========================================
 
-[classes]
-0=person
-1=bicycle
-2=car
-3=motorcycle
-4=airplane
-5=bus
-6=train
-7=truck
+#[classes]
+#0=person
+#1=bicycle
+#2=car
+#3=motorcycle
+#4=airplane
+#5=bus
+#6=train
+#7=truck
