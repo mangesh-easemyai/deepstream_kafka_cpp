@@ -13,9 +13,10 @@
 
 #include "../utils/common_utils.h"
 #include "../src/probe.h"
+#include "../utils/analyticsconfigwriter.h"
 class DeepstreamPipeline{
     public:
-        DeepstreamPipeline(JsonObject *config_root,guint rtsp_port_=8554,guint udp_port_=5400,std::string infer_config_path_="configs/Primary_Detector/config_infer_triton_yolov8.txt",std::string tracker_config_path_="configs/tracker_config/tracker_config.txt");
+        DeepstreamPipeline(JsonObject *config_root,guint rtsp_port_=8554,guint udp_port_=5400,std::string infer_config_path_="configs/Primary_Detector/config_infer_triton_yolov8.txt",std::string tracker_config_path_="configs/tracker_config/tracker_config.txt",std::string analytics_config_path_="configs/config_nvdsanalytics.txt");
         ~DeepstreamPipeline();
         void build();
         void run();
@@ -33,6 +34,7 @@ class DeepstreamPipeline{
         GstRTSPServer *server_=nullptr;
         std::vector<std::string> urls_;
         std::string tracker_config_path_;
+        std::string analytics_config_path_;
         std::string service_id_="ds-test";
         std::string infer_config_path_;
         guint rtsp_port_;

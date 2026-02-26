@@ -1,7 +1,8 @@
 #include "pipeline.h"
 
-DeepstreamPipeline::DeepstreamPipeline(JsonObject *config_root,guint rtsp_port,guint udp_port,std::string infer_config_path,std::string tracker_config_path):config_root_(config_root),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path),tracker_config_path_( tracker_config_path){
-
+DeepstreamPipeline::DeepstreamPipeline(JsonObject *config_root,guint rtsp_port,guint udp_port,std::string infer_config_path,std::string tracker_config_path,std::string analytics_config_path):config_root_(config_root),rtsp_port_(rtsp_port),udp_port_(udp_port),infer_config_path_(infer_config_path),tracker_config_path_( tracker_config_path),analytics_config_path_(analytics_config_path){
+    
+    
     if(config_root){
         if(json_object_has_member(config_root,"environment")){
             const gchar *env=json_object_get_string_member(config_root,"environment");
@@ -72,16 +73,31 @@ void DeepstreamPipeline::build(){
         std::cout << "High source count detected. Switching to low-res tracking: " 
                   << muxer_width_ << "x" << muxer_height_ << std::endl;
     }else{
-        muxer_width_=1280;
-        muxer_height_=720;
+        muxer_width_=1920;
+        muxer_height_=1080;
     }
+    
     g_object_set(streammux,"batch-size",batch_size,"width",muxer_width_,"height",muxer_height_,"batched-push-timeout",40000,
                 "enable-padding",TRUE,nullptr);
     guint tiler_rows=(guint)ceil(sqrt(batch_size));
     guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
-    
+    AnalyticsConfigWriter analyticsWriter;
+    analyticsWriter.setResolution(muxer_width_,muxer_height_);
+    JsonGenerator *gen=json_generator_new();
+    JsonNode *root_node=json_node_new(JSON_NODE_OBJECT);
+    json_node_set_object(root_node,config_root_);
+    json_generator_set_root(gen,root_node);
+    gchar *json_str=json_generator_to_data(gen,NULL);
+    if(!analyticsWriter.generateFromString(std::string(json_str),analytics_config_path_)){
+        std::cerr << "Warning : Failed to generate analytics config file "<< std::endl;
+
+    }
+    g_free(json_str);
+    json_node_free(root_node);
+    g_object_unref(gen);
+
     g_object_set(primary_nvinference_,"config-file-path",infer_config_path_.c_str(),nullptr);
-    g_object_set(nvdsanalytics_,"config-file","configs/config_nvdsanalytics.txt",nullptr);
+    g_object_set(nvdsanalytics_,"config-file",analytics_config_path_.c_str(),nullptr);
     if(!set_tracker_properties(nvtracker_)){
         std::cerr << "FATAL : Failed to configure tracker, check config path" << tracker_config_path_ << std::endl;
         return;
@@ -121,37 +137,64 @@ void DeepstreamPipeline::build(){
         std::cerr << "Build Error: Failed to link main pipeline" << std::endl;
         return;
     }
-    if(!gst_element_link_many(tee_,queue_display_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
+    GstPad *tee_disp_pad=gst_element_request_pad_simple(tee_,"src_%u");
+    GstPad *q_disp_pad=gst_element_get_static_pad(queue_display_,"sink");
+
+    if(gst_pad_link(tee_disp_pad,q_disp_pad)!=GST_PAD_LINK_OK){
+        std::cerr << "FATAL: Failed to link display branch "<< std::endl;
+        return ;
+    }
+    gst_object_unref(tee_disp_pad);
+    gst_object_unref(q_disp_pad);
+
+    GstPad *tee_kafka_pad=gst_element_request_pad_simple(tee_,"src_%u");
+    GstPad *q_kafka_pad=gst_element_get_static_pad(queue_kafka_,"sink");
+    if(gst_pad_link(tee_kafka_pad,q_kafka_pad)!= GST_PAD_LINK_OK){
+        std::cerr << "FATAL: Failed to link kafka branch "<< std::endl;
+        return;
+    }
+
+    gst_object_unref(tee_kafka_pad);
+    gst_object_unref(q_kafka_pad);
+
+    if(!gst_element_link_many(queue_display_,tiler_,queue_osd_,nvosd_,queue_encoder_,encoder_,queue_parse_,parse_,queue_payloader_,payloader_,udpsink_,nullptr)){
         std::cerr << "Build Error: Failed to link display branch" << std::endl;
         return;
     }
-    if(!gst_element_link_many(tee_,queue_kafka_,nvmsgconv_,nvmsgbroker_,nullptr)){
+    if(!gst_element_link_many(queue_kafka_,nvmsgconv_,nvmsgbroker_,nullptr)){
         std::cerr << "Build Error: Failed to link kafka branch" << std::endl;
         return;
     }
-    for(int i=0;i< batch_size;i++){
-         
-        GstElement *source_bin=create_source_bin(i,urls_[i]);
-        if(!source_bin){
-            std::cerr << "Build : Failed to create source bin "<< std::endl;
+
+    for(int i=0; i< batch_size; i++){
+        std::string elem_name = "source_" + std::to_string(i);
+        GstElement *uri_decode_bin = gst_element_factory_make("nvurisrcbin", elem_name.c_str());
+        
+        if(!uri_decode_bin){
+            std::cerr << "Build : Failed to create source element " << i << std::endl;
             return;
         }
-        gst_bin_add(GST_BIN(pipeline_),source_bin);
-        source_bins_.push_back(source_bin);
-        std::string pad_name="sink_"+std::to_string(i);
-        GstPad *sinkpad=gst_element_request_pad_simple(streammux,pad_name.c_str());
-        GstPad *srcpad=gst_element_get_static_pad(source_bin,"src");
-        if(!sinkpad || !srcpad){
-            std::cerr << "Build: Failed to get pads for source "<< i << std::endl;
-            return;
-        }
-        if(gst_pad_link(srcpad,sinkpad)!=GST_PAD_LINK_OK){
-            std::cerr << "Build Failed to link pads source bin "<< i << std::endl;
-            gst_object_unref(srcpad);
-            gst_object_unref(sinkpad);
-            return;
-        }
-         
+
+        g_object_set(G_OBJECT(uri_decode_bin), 
+                     "uri", urls_[i].c_str(),
+                     "select-rtp-protocol", 4, 
+                     "num-extra-surfaces", 4,
+                     "latency", 200, 
+                     "rtsp-reconnect-interval", 10, 
+                     "rtsp-reconnect-attempts", -1, 
+                     "file-loop", TRUE, 
+                     nullptr);
+
+        gst_bin_add(GST_BIN(pipeline_), uri_decode_bin);
+        
+        // Pass the index to the callback via data
+        g_object_set_data(G_OBJECT(uri_decode_bin), "sink-index", GINT_TO_POINTER(i));
+        
+        // Connect to on_pad_added. Pass 'streammux' as user data
+        g_signal_connect(G_OBJECT(uri_decode_bin), "pad-added", G_CALLBACK(on_pad_added), streammux);
+        
+        // Sync state
+        gst_element_sync_state_with_parent(uri_decode_bin);
     }
     bus_=gst_pipeline_get_bus(GST_PIPELINE(pipeline_));
     bus_watch_id=gst_bus_add_watch(bus_,bus_call,loop_);
@@ -227,8 +270,9 @@ bool DeepstreamPipeline::set_tracker_properties(GstElement *nvtracker){
         
         if(!g_strcmp0(key,CONFIG_GPU_ID)){
             guint gpu_id=g_key_file_get_integer(key_file,CONFIG_GROUP_TRACKER,CONFIG_GPU_ID,&error);
-            if(&error){
+            if(!error){
                 g_object_set(G_OBJECT(nvtracker),"gpu-id",gpu_id,nullptr);
+                 
             }
             else{
                 g_error_free(error);

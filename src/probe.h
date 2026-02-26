@@ -13,7 +13,7 @@
 #include <climits> // Add this for PATH_MAX
 #include <json-glib/json-glib.h>
 #include "../utils/common_utils.h"
-
+#include "../utils/analyticsconfigwriter.h"
 #ifndef MAX_TIME_STAMP_LEN
 #define MAX_TIME_STAMP_LEN 32
 #endif
