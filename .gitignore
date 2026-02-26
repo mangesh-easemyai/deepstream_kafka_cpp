@@ -7,3 +7,4 @@ deepstream_app
 .vscode 
 nvmsgconv/libnvds_msgconv.so
 configs/*.txt
+configs/config_nvdsanalytics.txt
