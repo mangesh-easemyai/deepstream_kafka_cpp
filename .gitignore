@@ -6,3 +6,4 @@ configs/tracker_config/*.so
 deepstream_app
 .vscode 
 nvmsgconv/libnvds_msgconv.so
+configs/*.txt
