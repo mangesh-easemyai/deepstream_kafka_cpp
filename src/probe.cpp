@@ -1,7 +1,7 @@
 #include "probe.h"
 
 #include <iostream>
-gint frame_number = 0 ;
+ 
 std::vector<std::string> class_labels=read_class_label("configs/Primary_Detector/labels.txt");
 GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo *info,gpointer u_data){
     GstBuffer *buf=(GstBuffer *)info->data;
@@ -176,7 +176,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
             json_object_set_null_member(analyticKeyFrameObj, "linecrossing_current_frame");
             json_object_set_null_member(analyticKeyFrameObj, "overcrowding_status");
         }
-
+         
         gchar frameKey[32];
         g_snprintf(frameKey, sizeof(frameKey), "%u", frame_meta->frame_num);
         json_object_set_string_member(taskDetailsObj, "frame_id", frameKey);
@@ -205,7 +205,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
          
         g_free(frame_json_str);
         json_node_free(rootNode);
-        // json_object_unref(rootObj);
+        json_object_unref(rootObj);
         NvDsUserMeta *user_event_meta = nvds_acquire_user_meta_from_pool(batch_meta);
         if (user_event_meta)
         {
@@ -229,7 +229,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
         }
     }
     
-    frame_number++;
+ 
     g_list_free(ids);
     return GST_PAD_PROBE_OK;
 }

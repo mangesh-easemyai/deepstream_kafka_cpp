@@ -9,7 +9,7 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
-#include "nvds_analytics_meta.h"
+// #include "nvds_analytics_meta.h"
 #include "nvmsgconv.h"
 #include "deepstream_schema.h"
 #include <json-glib/json-glib.h>
@@ -189,58 +189,42 @@ nvds_msg2p_generate(NvDsMsg2pCtx* ctx, NvDsEvent* events, guint size)
     return payload;
 }
 
-NvDsPayload*
-nvds_msg2p_generate_new(NvDsMsg2pCtx* ctx, void* metadataInfo)
+NvDsPayload**
+nvds_msg2p_generate_multiple(NvDsMsg2pCtx* ctx, NvDsEvent* events, guint eventSize, guint* payloadCount)
 {
-    gchar* message = NULL;
-    size_t len = 0;
-    NvDsMsg2pMetaInfo* meta_info = (NvDsMsg2pMetaInfo*)metadataInfo;
-    NvDsFrameMeta* frame_meta = (NvDsFrameMeta*)meta_info->frameMeta;
-    NvDsObjectMeta* obj_meta = (NvDsObjectMeta*)meta_info->objMeta;
+    *payloadCount = 0;
+    
+    if (!events || eventSize == 0) {
+        return NULL;
+    }
 
-    NvDsPayload* payload = (NvDsPayload*)g_malloc0(sizeof(NvDsPayload));
-    std::cout << "nvds_msg2p_generate_new set 1\n";
-    if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM) {
-        message = generate_dsmeta_message(ctx->privData, frame_meta, obj_meta);
-        if (message) {
-            len = strlen(message);
-            // Remove '\0' character at the end of string and just copy the content.
-            payload->payload = g_memdup(message, len);
-            payload->payloadSize = len;
-            g_free(message);
-        }
-    } else if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM_MINIMAL) {
-        if (meta_info->datamap) {
-            message = generate_dsmeta_message_ds3d(ctx->privData, meta_info->datamap, FALSE, len);
-        } else {
-            message = generate_dsmeta_message_minimal(ctx->privData, frame_meta);
-        }
-        if (message) {
-            len = strlen(message);
-            // Remove '\0' character at the end of string and just copy the content.
-            payload->payload = g_memdup(message, len);
-            payload->payloadSize = len;
-            g_free(message);
-        }
-    } else if (ctx->payloadType == NVDS_PAYLOAD_DEEPSTREAM_PROTOBUF) {
-        if (meta_info->datamap) {
-            message = generate_dsmeta_message_ds3d(ctx->privData, meta_info->datamap, TRUE, len);
-        } else {
-            message = generate_dsmeta_message_protobuf(ctx->privData, frame_meta, len);
-        }
-        if (message) {
-            payload->payload = g_memdup(message, len);
-            payload->payloadSize = len;
-            g_free(message);
-        }
-    } else if (ctx->payloadType == NVDS_PAYLOAD_CUSTOM) {
-        std::cout <<"nvs payload custom called \n";
-        payload->payload = (gpointer)g_strdup("CUSTOM Schema");
-        payload->payloadSize = strlen((char*)payload->payload) + 1;
-    } else
-        payload->payload = NULL;
+    // Allocate space for 1 payload (we return 1 message per frame)
+    NvDsPayload **payloads = (NvDsPayload**)g_malloc0(sizeof(NvDsPayload*) * 1);
 
-    return payload;
+    // Find first valid CUSTOM event with extMsg
+    for (guint i = 0; i < eventSize; i++) {
+        NvDsEventMsgMeta *meta = events[i].metadata;
+        
+        if (!meta) continue;
+
+        if (meta->type == NVDS_EVENT_CUSTOM && meta->extMsg && meta->extMsgSize > 0) {
+            NvDsPayload *payload = (NvDsPayload*)g_malloc0(sizeof(NvDsPayload));
+            
+            size_t len = meta->extMsgSize > 0 ? meta->extMsgSize - 1 : 0;
+            
+            payload->payload = g_memdup(meta->extMsg, len);
+            payload->payloadSize = len;
+            
+            payloads[0] = payload;
+            *payloadCount = 1;
+            
+            return payloads;  // Return immediately after finding first valid event
+        }
+    }
+
+    // No valid custom event found
+    g_free(payloads);
+    return NULL;
 }
 
 NvDsPayload**

@@ -112,7 +112,7 @@ void DeepstreamPipeline::build(){
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
     g_object_set(payloader_,"config-interval",0,"pt",96,nullptr);
     
-    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",0, "msg2p-newapi",1,nullptr);
+    g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",NVDS_PAYLOAD_CUSTOM, "msg2p-newapi",1,nullptr);
     g_object_set(nvmsgbroker_,"proto-lib","configs/libnvds_kafka_proto.so","conn-str","kafka;9092","topic","deepstream-analytics","sync",false,nullptr);
     g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
     g_object_set(queue_osd_,"max-size-buffers",5,nullptr);

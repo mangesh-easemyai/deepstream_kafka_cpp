@@ -14,7 +14,7 @@
 
 CC:= g++
 
-PKGS:= glib-2.0 gobject-2.0 json-glib-1.0 uuid
+PKGS:= glib-2.0 gobject-2.0 json-glib-1.0 uuid gstreamer-1.0 
 
 NVDS_VERSION:=8.0
 

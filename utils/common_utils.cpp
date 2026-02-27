@@ -143,6 +143,6 @@ void meta_free_func(gpointer data, gpointer user_data)
     
     if (srcMeta->extMsg)
         dstMeta->extMsg = g_strdup((char*)srcMeta->extMsg);
-
+        dstMeta->extMsgSize = srcMeta->extMsgSize;
     return dstMeta;
 }
