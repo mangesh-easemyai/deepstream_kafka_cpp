@@ -144,6 +144,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
                     
                     // Extract Direction of this specific object
                     if (!user_meta_data->dirStatus.empty()) {
+                         
                         json_array_add_string_element(dirArray, user_meta_data->dirStatus.c_str());
                     }
                 }

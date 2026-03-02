@@ -81,20 +81,20 @@ void DeepstreamPipeline::build(){
                 "enable-padding",TRUE,nullptr);
     guint tiler_rows=(guint)ceil(sqrt(batch_size));
     guint tiler_cols=(guint)ceil((double)batch_size/tiler_rows);
-    AnalyticsConfigWriter analyticsWriter;
-    analyticsWriter.setResolution(muxer_width_,muxer_height_);
-    JsonGenerator *gen=json_generator_new();
-    JsonNode *root_node=json_node_new(JSON_NODE_OBJECT);
-    json_node_set_object(root_node,config_root_);
-    json_generator_set_root(gen,root_node);
-    gchar *json_str=json_generator_to_data(gen,NULL);
-    if(!analyticsWriter.generateFromString(std::string(json_str),analytics_config_path_)){
-        std::cerr << "Warning : Failed to generate analytics config file "<< std::endl;
+    // AnalyticsConfigWriter analyticsWriter;
+    // analyticsWriter.setResolution(muxer_width_,muxer_height_);
+    // JsonGenerator *gen=json_generator_new();
+    // JsonNode *root_node=json_node_new(JSON_NODE_OBJECT);
+    // json_node_set_object(root_node,config_root_);
+    // json_generator_set_root(gen,root_node);
+    // gchar *json_str=json_generator_to_data(gen,NULL);
+    // if(!analyticsWriter.generateFromString(std::string(json_str),analytics_config_path_)){
+    //     std::cerr << "Warning : Failed to generate analytics config file "<< std::endl;
 
-    }
-    g_free(json_str);
-    json_node_free(root_node);
-    g_object_unref(gen);
+    // }
+    // g_free(json_str);
+    // json_node_free(root_node);
+    // g_object_unref(gen);
 
     g_object_set(primary_nvinference_,"config-file-path",infer_config_path_.c_str(),nullptr);
     g_object_set(nvdsanalytics_,"config-file",analytics_config_path_.c_str(),nullptr);

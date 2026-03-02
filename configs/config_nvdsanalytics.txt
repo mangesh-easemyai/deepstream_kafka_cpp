@@ -1,33 +1,32 @@
 [property]
 enable=1
+# This MUST match your C++ muxer_width_ and muxer_height_ exactly
 config-width=1280
 config-height=720
 osd-mode=2
 display-font-size=12
 
-## Stream 0 - 1bfa0d514984801bb4ddbd760bfe9c5
 [roi-filtering-stream-0]
 enable=1
-roi-RF=10;575;144;461;1011;400;1268;433;1272;622
+# Mapped roughly to the yellow box in your image for 1280x720
+roi-RF=80;450;1150;430;1150;620;80;620
+# Trigger on all objects for testing
 class-id=-1
 
 [line-crossing-stream-0]
 enable=1
-line-crossing-Exit=789;672;1084;900;851;773;1203;732
-line-crossing-Entry=936;464;954;183;646;419;1231;420
-class-id=0
+# A horizontal line across the middle of the street. 
+# The vector (C to D) points downwards, catching cars driving toward the camera.
+line-crossing-Incoming=400;500;1100;500;750;480;750;550
+# Trigger on all objects
+class-id=-1
 extended=0
 mode=loose
 
-[overcrowding-stream-0]
-enable=1
-roi-OC=295;643;579;634;642;913;56;828
-object-threshold=2
-class-id=-1
-
 [direction-detection-stream-0]
 enable=1
-direction-South=284;840;360;662;
-direction-North=1106;622;1312;701;
-class-id=0
-
+# Tracks objects moving towards the camera (top to bottom)
+direction-South=600;450;600;600
+# Tracks objects moving away from the camera (bottom to top)
+direction-North=900;600;900;450
+class-id=-1
