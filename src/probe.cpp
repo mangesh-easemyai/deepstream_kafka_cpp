@@ -3,6 +3,28 @@
 #include <iostream>
  
 std::vector<std::string> class_labels=read_class_label("configs/Primary_Detector/labels.txt");
+static gpointer custom_payload_copy_func(gpointer data, gpointer user_data) {
+    NvDsUserMeta *user_meta = (NvDsUserMeta *)data;
+    NvDsPayload *src_payload = (NvDsPayload *)user_meta->user_meta_data;
+    
+    NvDsPayload *dst_payload = (NvDsPayload *)g_malloc0(sizeof(NvDsPayload));
+    dst_payload->payloadSize = src_payload->payloadSize;
+    dst_payload->payload = g_malloc0(src_payload->payloadSize);
+    memcpy(dst_payload->payload, src_payload->payload, src_payload->payloadSize);
+    
+    return dst_payload;
+}
+static void custom_payload_free_func(gpointer data, gpointer user_data) {
+    NvDsUserMeta *user_meta = (NvDsUserMeta *)data;
+    NvDsPayload *payload = (NvDsPayload *)user_meta->user_meta_data;
+    
+    if (payload) {
+        if (payload->payload) {
+            g_free(payload->payload);
+        }
+        g_free(payload);
+    }
+}
 GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo *info,gpointer u_data){
     GstBuffer *buf=(GstBuffer *)info->data;
     GstMapInfo inmap=GST_MAP_INFO_INIT;
@@ -33,6 +55,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
     for(NvDsMetaList *l_frame=batch_meta->frame_meta_list;l_frame !=NULL;l_frame=l_frame->next){
         NvDsFrameMeta *frame_meta=(NvDsFrameMeta *)l_frame->data;
         int source_id=frame_meta->source_id;
+         
         std::string id_str;
         if(source_id >=0 && source_id <probe_data->source_ids.size()){
             id_str=probe_data->source_ids[source_id];
@@ -67,6 +90,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
         JsonObject *rootObj=json_object_new();
         json_object_set_string_member(rootObj,"timestamp",ts);
         json_object_set_string_member(rootObj,"source_id",id);
+       
         json_object_set_string_member(rootObj,"service_id",service_id);
         json_object_set_string_member(rootObj,"source_name",link);
 
@@ -93,17 +117,55 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
             json_object_set_double_member(bboxObj, "left", obj_meta->rect_params.left * scaleW);
             json_object_set_double_member(bboxObj, "width", obj_meta->rect_params.width * scaleW);
             json_object_set_double_member(bboxObj, "height", obj_meta->rect_params.height * scaleH);
-
+            
             json_object_set_object_member(objJson, "bbox", bboxObj);
+            JsonArray *roiArray = json_array_new();
+            JsonArray *lcArray = json_array_new();
+            JsonArray *dirArray = json_array_new();
+
+            for (NvDsMetaList *l_user_meta = obj_meta->obj_user_meta_list; l_user_meta != NULL; l_user_meta = l_user_meta->next) 
+            {
+                NvDsUserMeta *user_meta = (NvDsUserMeta *)l_user_meta->data;
+                
+                // Use the macro, NO strings
+                if (user_meta->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) 
+                {
+                    NvDsAnalyticsObjInfo *user_meta_data = (NvDsAnalyticsObjInfo *)user_meta->user_meta_data;
+                    
+                    // Extract ROIs this specific object is inside
+                    for (const auto &roi : user_meta_data->roiStatus) {
+                        json_array_add_string_element(roiArray, roi.c_str());
+                    }
+                    
+                    // Extract Lines this specific object crossed
+                    for (const auto &lc : user_meta_data->lcStatus) {
+                        json_array_add_string_element(lcArray, lc.c_str());
+                    }
+                    
+                    // Extract Direction of this specific object
+                    if (!user_meta_data->dirStatus.empty()) {
+                        json_array_add_string_element(dirArray, user_meta_data->dirStatus.c_str());
+                    }
+                }
+            }
+
+            // Attach analytics arrays to the individual object JSON
+            json_object_set_array_member(objJson, "roi_status", roiArray);
+            json_object_set_array_member(objJson, "line_crossing_status", lcArray);
+            json_object_set_array_member(objJson, "direction_status", dirArray);
             json_array_add_object_element(objectsArray, objJson);
+            
         }
         // Process analytics metadata (existing code continues...)
         JsonObject *analyticKeyFrameObj = json_object_new();
         for (NvDsMetaList *l_user = frame_meta->frame_user_meta_list; l_user != NULL; l_user = l_user->next)
         {
+            
             NvDsUserMeta *user_meta = (NvDsUserMeta *)l_user->data;
-            if (user_meta->base_meta.meta_type == nvds_get_user_meta_type((gchar *)"NVIDIA.DSANALYTICSFRAME.USER_META"))
+            if (user_meta->base_meta.meta_type == NVDS_USER_FRAME_META_NVDSANALYTICS)
             {
+                 
+
                 NvDsAnalyticsFrameMeta *analytics_meta = (NvDsAnalyticsFrameMeta *)user_meta->user_meta_data;
 
                 // ROI counts (existing code)
@@ -166,7 +228,7 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
                     json_object_set_object_member(analyticKeyFrameObj, "overcrowding_status", ocObj);
                 }
                 break;
-            }
+            } 
         }
 
         if (json_object_get_size(analyticKeyFrameObj) == 0)
@@ -190,43 +252,60 @@ GstPadProbeReturn nvdsanalytics_src_pad_buffer_probe(GstPad *pad,GstPadProbeInfo
         json_node_set_object(rootNode, rootObj);
         gchar *frame_json_str = json_to_string(rootNode, TRUE);
          // Create NvDsEventMsgMeta with JSON in extMsg
-        NvDsEventMsgMeta *msg_meta = (NvDsEventMsgMeta *)g_malloc0(sizeof(NvDsEventMsgMeta));
-        msg_meta->type = NVDS_EVENT_CUSTOM;
-        msg_meta->objType = NVDS_OBJECT_TYPE_CUSTOM;
-        msg_meta->frameId = frame_meta->frame_num;
-        msg_meta->ts = g_strdup(ts);
-        msg_meta->sensorId = source_id;
-        msg_meta->sensorStr = g_strdup("camera_id");
-        msg_meta->videoPath = g_strdup("source_name");
-        msg_meta->extMsg = (void *)g_strdup(frame_json_str);
-        msg_meta->extMsgSize = strlen(frame_json_str) + 1;
-
+        // NvDsEventMsgMeta *msg_meta = (NvDsEventMsgMeta *)g_malloc0(sizeof(NvDsEventMsgMeta));
+        // msg_meta->type = NVDS_EVENT_CUSTOM;
+        // msg_meta->objType = NVDS_OBJECT_TYPE_CUSTOM;
+        // msg_meta->frameId = frame_meta->frame_num;
+        // msg_meta->ts = g_strdup(ts);
+        // msg_meta->sensorId = source_id;
+        // msg_meta->sensorStr = g_strdup("camera_id");
+        // msg_meta->videoPath = g_strdup("source_name");
+        // msg_meta->extMsg = (void *)g_strdup(frame_json_str);
+        // msg_meta->extMsgSize = strlen(frame_json_str) + 1;
+        
+        NvDsPayload *payload = (NvDsPayload *)g_malloc0(sizeof(NvDsPayload));
+        payload->payload = (gpointer)g_strdup(frame_json_str);
+        payload->payloadSize = strlen(frame_json_str);
+        NvDsUserMeta *user_payload_meta = nvds_acquire_user_meta_from_pool(batch_meta);
+        if (user_payload_meta) {
+            user_payload_meta->user_meta_data = (void *)payload;
+            user_payload_meta->base_meta.meta_type = NVDS_PAYLOAD_META;
+            
+            // Use the functions we just created
+            user_payload_meta->base_meta.copy_func = (NvDsMetaCopyFunc)custom_payload_copy_func;
+            user_payload_meta->base_meta.release_func = (NvDsMetaReleaseFunc)custom_payload_free_func;
+            
+            nvds_add_user_meta_to_frame(frame_meta, user_payload_meta);
+        } else {
+            g_free(payload->payload);
+            g_free(payload);
+        }
         // Cleanup
          
         g_free(frame_json_str);
         json_node_free(rootNode);
         json_object_unref(rootObj);
         NvDsUserMeta *user_event_meta = nvds_acquire_user_meta_from_pool(batch_meta);
-        if (user_event_meta)
-        {
-            user_event_meta->user_meta_data = (void *)msg_meta;
-            user_event_meta->base_meta.meta_type = NVDS_EVENT_MSG_META;
-            user_event_meta->base_meta.copy_func = (NvDsMetaCopyFunc)meta_copy_func;
-            user_event_meta->base_meta.release_func = (NvDsMetaReleaseFunc)meta_free_func;
-            nvds_add_user_meta_to_frame(frame_meta, user_event_meta);
-        }
-        else
-        {
-            if (msg_meta->ts)
-                g_free(msg_meta->ts);
-            if (msg_meta->sensorStr)
-                g_free(msg_meta->sensorStr);
-            if (msg_meta->videoPath)
-                g_free(msg_meta->videoPath);
-            if (msg_meta->extMsg)
-                g_free(msg_meta->extMsg);
-            g_free(msg_meta);
-        }
+        // if (user_event_meta)
+        // {
+        //     user_event_meta->user_meta_data = (void *)msg_meta;
+        //     user_event_meta->base_meta.meta_type = NVDS_EVENT_MSG_META;
+        //     user_event_meta->base_meta.copy_func = (NvDsMetaCopyFunc)meta_copy_func;
+        //     user_event_meta->base_meta.release_func = (NvDsMetaReleaseFunc)meta_free_func;
+        //     nvds_add_user_meta_to_frame(frame_meta, user_event_meta);
+        // }
+        // else
+        // {
+        //     if (msg_meta->ts)
+        //         g_free(msg_meta->ts);
+        //     if (msg_meta->sensorStr)
+        //         g_free(msg_meta->sensorStr);
+        //     if (msg_meta->videoPath)
+        //         g_free(msg_meta->videoPath);
+        //     if (msg_meta->extMsg)
+        //         g_free(msg_meta->extMsg);
+        //     g_free(msg_meta);
+        // }
     }
     
  

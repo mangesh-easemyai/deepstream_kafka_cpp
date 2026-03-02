@@ -73,8 +73,8 @@ void DeepstreamPipeline::build(){
         std::cout << "High source count detected. Switching to low-res tracking: " 
                   << muxer_width_ << "x" << muxer_height_ << std::endl;
     }else{
-        muxer_width_=1920;
-        muxer_height_=1080;
+        muxer_width_=1280;
+        muxer_height_=720;
     }
     
     g_object_set(streammux,"batch-size",batch_size,"width",muxer_width_,"height",muxer_height_,"batched-push-timeout",40000,
@@ -110,9 +110,11 @@ void DeepstreamPipeline::build(){
                  
                 "profile",0,nullptr);
     g_object_set(encoder_,"insert-sps-pps",1,"iframeinterval",30,"idrinterval",30,nullptr);
-    g_object_set(payloader_,"config-interval",0,"pt",96,nullptr);
+    g_object_set(payloader_,"pt",96,nullptr);
     
     g_object_set(nvmsgconv_,"config","configs/msgconv_config.txt","payload-type",NVDS_PAYLOAD_CUSTOM, "msg2p-newapi",1,nullptr);
+    g_object_set(nvmsgconv_,"frame-interval",1,nullptr);
+    g_object_set(nvmsgbroker_,"config","configs/kafka_config.txt",nullptr);
     g_object_set(nvmsgbroker_,"proto-lib","configs/libnvds_kafka_proto.so","conn-str","kafka;9092","topic","deepstream-analytics","sync",false,nullptr);
     g_object_set(queue_infer_,"max-size-buffers",5,nullptr);
     g_object_set(queue_osd_,"max-size-buffers",5,nullptr);
@@ -161,7 +163,7 @@ void DeepstreamPipeline::build(){
         std::cerr << "Build Error: Failed to link display branch" << std::endl;
         return;
     }
-    if(!gst_element_link_many(queue_kafka_,nvmsgconv_,nvmsgbroker_,nullptr)){
+    if(!gst_element_link_many(queue_kafka_,nvmsgbroker_,nullptr)){
         std::cerr << "Build Error: Failed to link kafka branch" << std::endl;
         return;
     }
