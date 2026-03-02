@@ -1,3 +1,3 @@
 [message-broker]
-partition-key = sensor.id
+partition-key = source_id
 auto-reconnect=1

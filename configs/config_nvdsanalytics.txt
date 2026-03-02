@@ -1,14 +1,14 @@
 [property]
 enable=1
-config-width=1920
-config-height=1080
+config-width=1280
+config-height=720
 osd-mode=2
 display-font-size=12
 
 ## Stream 0 - 1bfa0d514984801bb4ddbd760bfe9c5
 [roi-filtering-stream-0]
 enable=1
-roi-RF=295;643;579;634;642;913;56;828
+roi-RF=10;575;144;461;1011;400;1268;433;1272;622
 class-id=-1
 
 [line-crossing-stream-0]
